@@ -1,0 +1,45 @@
+# `cargo local-registry`
+
+This is a Cargo subcommand to ease maintenance of local registries. Support for
+a local registry is being added in
+[rust-lang/cargo#2361](https://github.com/rust-lang/cargo/pull/2361) and will be
+able to redirect all Cargo downloads/requests to a registry stored locally.
+
+This support is often useful for "offline builds" by preparing the list of all
+Rust dependencies ahead of time and shipping them to a build machine in a
+pre-ordained format. A local registry is an index and a collection of tarballs,
+all of which currently originate from crates.io.
+
+The purpose of this subcommand will be to manage these registries and allow
+adding/deleting packages with ease.
+
+
+## Installation
+
+```
+cargo install cargo-local-registry
+```
+
+## Usage
+
+One of the primary operations will be to create a local registry from a lock
+file itself. This can be done via
+
+```
+cargo local-registry --sync path/to/Cargo.lock path/to/registry
+```
+
+This command will:
+
+* Download all dependencies from the crates.io registry
+* Verify all checksums of what's downloaded
+* Place all downloads in `path/to/registry`
+* Prepare the index of `path/to/registry` to reflect all this information
+
+# License
+
+`cargo-local-registry` is primarily distributed under the terms of both the MIT
+license and the Apache License (Version 2.0), with portions covered by various
+BSD-like licenses.
+
+See LICENSE-APACHE, and LICENSE-MIT for details.
