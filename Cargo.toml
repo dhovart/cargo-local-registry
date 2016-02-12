@@ -1,0 +1,8 @@
+[package]
+name = "cargo-local-registry"
+version = "0.1.0"
+authors = ["Alex Crichton <alex@alexcrichton.com>"]
+
+[dependencies]
+cargo = "0.8"
+rustc-serialize = "0.3"
