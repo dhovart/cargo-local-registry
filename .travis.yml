@@ -9,3 +9,12 @@ script:
 notifications:
   email:
     on_success: never
+addons:
+  apt:
+    sources:
+      - kalakris-cmake
+    packages:
+      - cmake
+os:
+  - linux
+  - osx
