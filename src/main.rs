@@ -29,7 +29,7 @@ fn main() {
 Vendor all dependencies for a project locally
 
 Usage:
-    cargo local-registry [options] <path>
+    cargo local-registry [options] [<path>]
 
 Options:
     -h, --help               Print this message
