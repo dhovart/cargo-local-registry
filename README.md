@@ -1,5 +1,8 @@
 # `cargo local-registry`
 
+[![Build Status](https://travis-ci.org/alexcrichton/cargo-local-registry.svg?branch=master)](https://travis-ci.org/alexcrichton/cargo-local-registry)
+[![Build status](https://ci.appveyor.com/api/projects/status/x867la68pp0s94an/branch/master?svg=true)](https://ci.appveyor.com/project/alexcrichton/cargo-local-registry/branch/master)
+
 This is a Cargo subcommand to ease maintenance of local registries. Support for
 a local registry is being added in
 [rust-lang/cargo#2361](https://github.com/rust-lang/cargo/pull/2361) and will be
