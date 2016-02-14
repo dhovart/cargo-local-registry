@@ -1,6 +1,7 @@
 extern crate cargo;
 extern crate rustc_serialize;
 
+use std::env;
 use std::fs::{self, File};
 use std::io::prelude::*;
 use std::path::Path;
@@ -83,7 +84,7 @@ fn sync(lockfile: &Path,
         registry_id: &SourceId,
         config: &Config) -> CargoResult<()> {
     let mut registry = registry_id.load(config);
-    let temp_id = SourceId::for_path(Path::new("tmp")).unwrap();
+    let temp_id = SourceId::for_path(&env::current_dir().unwrap().join("tmp")).unwrap();
     let resolve = try!(cargo::ops::load_lockfile(Path::new(lockfile), &temp_id));
     let resolve = try!(resolve.chain_error(|| {
         human(format!("lock file `{}` does not exist", lockfile.display()))
