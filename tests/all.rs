@@ -49,7 +49,7 @@ name = "foo"
 version = "0.1.0"
 dependencies = []
 "#).unwrap();
-    run(cmd().arg(&registry).arg("--sync").arg(&lock));
+    run(cmd().arg(&registry).arg("--sync").arg(&lock).arg("-v"));
 
     assert!(registry.join("index").is_dir());
     assert_eq!(registry.join("index").read_dir().unwrap().count(), 0);
