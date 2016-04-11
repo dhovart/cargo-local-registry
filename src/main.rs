@@ -105,11 +105,11 @@ fn sync(lockfile: &Path,
         if vec.len() > 1 {
             return Err(human(format!("found too many packages: {}", id)))
         }
-    }
 
-    try!(registry.download(&ids).chain_error(|| {
-        human(format!("failed to download packages from registry"))
-    }));
+        try!(registry.download(id).chain_error(|| {
+            human(format!("failed to download package from registry"))
+        }));
+    }
 
     let hash = cargo::util::hex::short_hash(registry_id);
     let ident = registry_id.url().host().unwrap().to_string();

@@ -4,6 +4,7 @@ use std::env;
 use std::fs::File;
 use std::io::prelude::*;
 use std::process::Command;
+use std::sync::{Once, Mutex, MutexGuard, ONCE_INIT};
 
 use tempdir::TempDir;
 
@@ -16,6 +17,18 @@ fn cmd() -> Command {
     return cmd
 }
 
+static INIT: Once = ONCE_INIT;
+static mut LOCK: *mut Mutex<()> = 0 as *mut _;
+
+fn lock() -> MutexGuard<'static, ()> {
+    unsafe {
+        INIT.call_once(|| {
+            LOCK = Box::into_raw(Box::new(Mutex::new(())));
+        });
+        (*LOCK).lock().unwrap()
+    }
+}
+
 #[test]
 fn help() {
     run(cmd().arg("--help"));
@@ -24,6 +37,7 @@ fn help() {
 
 #[test]
 fn no_sync() {
+    let _l = lock();
     let td = TempDir::new("local-registry").unwrap();
     let output = run(cmd().arg(td.path()));
     assert!(td.path().join("index").exists());
@@ -32,6 +46,7 @@ fn no_sync() {
 
 #[test]
 fn dst_no_exists() {
+    let _l = lock();
     let td = TempDir::new("local-registry").unwrap();
     let output = run(cmd().arg(td.path().join("foo")));
     assert!(td.path().join("foo/index").exists());
@@ -40,6 +55,7 @@ fn dst_no_exists() {
 
 #[test]
 fn empty_cargo_lock() {
+    let _l = lock();
     let td = TempDir::new("local-registry").unwrap();
     let lock = td.path().join("Cargo.lock");
     let registry = td.path().join("registry");
@@ -57,6 +73,7 @@ dependencies = []
 
 #[test]
 fn libc_dependency() {
+    let _l = lock();
     let td = TempDir::new("local-registry").unwrap();
     let lock = td.path().join("Cargo.lock");
     let registry = td.path().join("registry");
