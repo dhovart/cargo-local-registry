@@ -1,7 +1,7 @@
 extern crate tempdir;
 
 use std::env;
-use std::fs::File;
+use std::fs::{self, File};
 use std::io::prelude::*;
 use std::process::Command;
 use std::sync::{Once, Mutex, MutexGuard, ONCE_INIT};
@@ -59,6 +59,14 @@ fn empty_cargo_lock() {
     let td = TempDir::new("local-registry").unwrap();
     let lock = td.path().join("Cargo.lock");
     let registry = td.path().join("registry");
+    fs::create_dir(td.path().join("src")).unwrap();
+    File::create(&td.path().join("Cargo.toml")).unwrap().write_all(br#"
+        [package]
+        name = "foo"
+        version = "0.1.0"
+        authors = []
+    "#).unwrap();
+    File::create(&td.path().join("src/lib.rs")).unwrap().write_all(b"").unwrap();
     File::create(&lock).unwrap().write_all(br#"
 [root]
 name = "foo"
@@ -77,6 +85,17 @@ fn libc_dependency() {
     let td = TempDir::new("local-registry").unwrap();
     let lock = td.path().join("Cargo.lock");
     let registry = td.path().join("registry");
+    fs::create_dir(td.path().join("src")).unwrap();
+    File::create(&td.path().join("Cargo.toml")).unwrap().write_all(br#"
+        [package]
+        name = "foo"
+        version = "0.1.0"
+        authors = []
+
+        [dependencies]
+        libc = "0.2.7"
+    "#).unwrap();
+    File::create(&td.path().join("src/lib.rs")).unwrap().write_all(b"").unwrap();
     File::create(&lock).unwrap().write_all(br#"
 [root]
 name = "foo"
