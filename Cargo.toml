@@ -13,7 +13,7 @@ A Cago subcommand for managing local registries.
 """
 
 [dependencies]
-cargo = "0.9"
+cargo = { git = 'https://github.com/rust-lang/cargo', rev = 'aec15e3d00' }
 rustc-serialize = "0.3"
 
 [dev-dependencies]

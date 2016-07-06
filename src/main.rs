@@ -6,7 +6,7 @@ use std::fs::{self, File};
 use std::io::prelude::*;
 use std::path::Path;
 
-use cargo::core::{SourceId, Dependency};
+use cargo::core::{SourceId, Dependency, Package};
 use cargo::CliResult;
 use cargo::util::{human, ChainError, ToUrl, Config, CargoResult};
 
@@ -15,8 +15,8 @@ struct Options {
     arg_path: String,
     flag_sync: Option<String>,
     flag_host: Option<String>,
-    flag_verbose: bool,
-    flag_quiet: bool,
+    flag_verbose: u32,
+    flag_quiet: Option<bool>,
     flag_color: Option<String>,
 }
 
@@ -43,8 +43,9 @@ Options:
 }
 
 fn real_main(options: Options, config: &Config) -> CliResult<Option<()>> {
-    try!(config.shell().set_verbosity(options.flag_verbose, options.flag_quiet));
-    try!(config.shell().set_color_config(options.flag_color.as_ref().map(|s| &s[..])));
+    try!(config.configure_shell(options.flag_verbose,
+                                options.flag_quiet,
+                                &options.flag_color));
 
     let path = Path::new(&options.arg_path);
     let index = path.join("index");
@@ -63,7 +64,9 @@ fn real_main(options: Options, config: &Config) -> CliResult<Option<()>> {
         None => return Ok(None),
     };
 
-    try!(sync(Path::new(lockfile), &path, &id, config));
+    try!(sync(Path::new(lockfile), &path, &id, config).chain_error(|| {
+        human("failed to sync")
+    }));
 
     println!("add this to your .cargo/config somewhere:
 
@@ -84,8 +87,14 @@ fn sync(lockfile: &Path,
         registry_id: &SourceId,
         config: &Config) -> CargoResult<()> {
     let mut registry = registry_id.load(config);
-    let temp_id = SourceId::for_path(&env::current_dir().unwrap().join("tmp")).unwrap();
-    let resolve = try!(cargo::ops::load_lockfile(Path::new(lockfile), &temp_id));
+    let manifest = lockfile.parent().unwrap().join("Cargo.toml");
+    let manifest = env::current_dir().unwrap().join(&manifest);
+    let pkg = try!(Package::for_path(&manifest, config).chain_error(|| {
+        human("failed to load package")
+    }));
+    let resolve = try!(cargo::ops::load_pkg_lockfile(&pkg, config).chain_error(|| {
+        human("failed to load pkg lockfile")
+    }));
     let resolve = try!(resolve.chain_error(|| {
         human(format!("lock file `{}` does not exist", lockfile.display()))
     }));
@@ -120,7 +129,7 @@ fn sync(lockfile: &Path,
 
     for id in ids.iter() {
         let filename = format!("{}-{}.crate", id.name(), id.version());
-        let src = cache.join(&filename);
+        let src = cache.join(&filename).into_path_unlocked();
         let dst = local_dst.join(&filename);
         try!(fs::copy(&src, &dst).chain_error(|| {
             human(format!("failed to copy `{}` to `{}`", src.display(),
@@ -135,7 +144,7 @@ fn sync(lockfile: &Path,
             _ => format!("{}/{}/{}", &name[..2], &name[2..4], name),
         };
 
-        let src = index.join(&part);
+        let src = index.join(&part).into_path_unlocked();
         let dst = local_dst.join("index").join(&part);
         try!(fs::create_dir_all(&dst.parent().unwrap()));
 
