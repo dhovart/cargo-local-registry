@@ -143,6 +143,43 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
     assert!(contents.contains("0.2.7"));
 }
 
+#[test]
+fn git_dependency() {
+    let _l = lock();
+    let td = TempDir::new("local-registry").unwrap();
+    let lock = td.path().join("Cargo.lock");
+    let registry = td.path().join("registry");
+    fs::create_dir(td.path().join("src")).unwrap();
+    File::create(&td.path().join("Cargo.toml")).unwrap().write_all(br#"
+        [package]
+        name = "foo"
+        version = "0.1.0"
+        authors = []
+
+        [dependencies]
+        libc = { git = "https://github.com/rust-lang/libc" }
+    "#).unwrap();
+    File::create(&td.path().join("src/lib.rs")).unwrap().write_all(b"").unwrap();
+    File::create(&lock).unwrap().write_all(br#"
+[root]
+name = "foo"
+version = "0.1.0"
+dependencies = [
+ "libc 0.2.16 (git+https://github.com/rust-lang/libc)",
+]
+
+[[package]]
+name = "libc"
+version = "0.2.16"
+source = "git+https://github.com/rust-lang/libc#36bec35aeb600bb1b8b47f4985a84a8d4a261747"
+"#).unwrap();
+    run(cmd().arg(&registry).arg("--sync").arg(&lock).arg("--git"));
+
+    assert!(registry.join("index").is_dir());
+    assert!(registry.join("index/li/bc/libc").is_file());
+    assert!(registry.join("libc-0.2.16.crate").is_file());
+}
+
 fn run(cmd: &mut Command) -> String {
     let output = cmd.output().unwrap();
     if !output.status.success() {

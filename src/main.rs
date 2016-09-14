@@ -1,28 +1,53 @@
 extern crate cargo;
+extern crate flate2;
 extern crate rustc_serialize;
+extern crate tar;
 
+use std::collections::HashMap;
 use std::env;
 use std::fs::{self, File};
 use std::io::prelude::*;
-use std::path::Path;
+use std::path::{self, Path};
 
-use cargo::core::{SourceId, Dependency, Package};
 use cargo::CliResult;
+use cargo::core::{SourceId, Dependency, Package};
+use cargo::core::dependency::{Kind, Platform};
+use cargo::sources::PathSource;
 use cargo::util::{human, ChainError, ToUrl, Config, CargoResult};
+use flate2::write::GzEncoder;
+use rustc_serialize::json;
+use tar::{Builder, Header};
 
 #[derive(RustcDecodable)]
 struct Options {
     arg_path: String,
     flag_sync: Option<String>,
     flag_host: Option<String>,
-    flag_verbose: Option<bool>,
+    flag_verbose: u32,
     flag_quiet: Option<bool>,
     flag_color: Option<String>,
+    flag_git: bool,
 }
 
-#[derive(RustcDecodable)]
+#[derive(RustcDecodable, RustcEncodable)]
 struct RegistryPackage {
+    name: String,
     vers: String,
+    deps: Vec<RegistryDependency>,
+    features: HashMap<String, Vec<String>>,
+    cksum: String,
+    yanked: Option<bool>,
+}
+
+#[derive(RustcDecodable, RustcEncodable)]
+struct RegistryDependency {
+    name: String,
+    req: String,
+    features: Vec<String>,
+    optional: bool,
+    default_features: bool,
+    target: Option<String>,
+    kind: Option<String>,
 }
 
 fn main() {
@@ -36,6 +61,7 @@ Options:
     -h, --help               Print this message
     -s, --sync LOCK          Sync the registry with LOCK
     --host HOST              Registry index to sync with
+    --git                    Vendor git dependencies as well
     -v, --verbose            Use verbose output
     -q, --quiet              No output printed to stdout
     --color WHEN             Coloring: auto, always, never
@@ -67,6 +93,12 @@ fn real_main(options: Options, config: &Config) -> CliResult<Option<()>> {
     try!(sync(Path::new(lockfile), &path, &id, config).chain_error(|| {
         human("failed to sync")
     }));
+
+    if options.flag_git {
+        try!(sync_git(Path::new(lockfile), &path, config).chain_error(|| {
+            human("failed to sync git repos")
+        }));
+    }
 
     println!("add this to your .cargo/config somewhere:
 
@@ -174,6 +206,125 @@ fn sync(lockfile: &Path,
     }
 
     Ok(())
+}
+
+fn sync_git(lockfile: &Path,
+            local_dst: &Path,
+            config: &Config) -> CargoResult<()> {
+    let manifest = lockfile.parent().unwrap().join("Cargo.toml");
+    let manifest = env::current_dir().unwrap().join(&manifest);
+    let pkg = try!(Package::for_path(&manifest, config).chain_error(|| {
+        human("failed to load package")
+    }));
+    let resolve = try!(cargo::ops::load_pkg_lockfile(&pkg, config).chain_error(|| {
+        human("failed to load pkg lockfile")
+    }));
+    let resolve = try!(resolve.chain_error(|| {
+        human(format!("lock file `{}` does not exist", lockfile.display()))
+    }));
+
+    let ids = resolve.iter()
+                     .filter(|id| id.source_id().is_git())
+                     .collect::<Vec<_>>();
+    for id in ids.iter() {
+        let any_registry = resolve.iter()
+                                  .filter(|p| p.name() == id.name())
+                                  .any(|p| !p.source_id().is_git());
+        if any_registry {
+            panic!("git dependency shares names with other dep: {}", id.name());
+        }
+        let dep = try!(Dependency::parse(id.name(), None, id.source_id()));
+        let mut source = id.source_id().load(config);
+        try!(source.update());
+        let vec = try!(source.query(&dep));
+        if vec.len() == 0 {
+            return Err(human(format!("could not find package: {}", id)))
+        }
+        if vec.len() > 1 {
+            return Err(human(format!("found too many packages: {}", id)))
+        }
+        let pkg = try!(source.download(id).chain_error(|| {
+            human(format!("failed to download package from registry"))
+        }));
+
+        let filename = format!("{}-{}.crate", id.name(), id.version());
+        let dst = local_dst.join(&filename);
+        let file = File::create(&dst).unwrap();
+        let gz = GzEncoder::new(file, flate2::Compression::Best);
+        let mut ar = Builder::new(gz);
+        build_ar(&mut ar, &pkg, config);
+
+        let name = id.name();
+        let part = match name.len() {
+            1 => format!("1/{}", name),
+            2 => format!("2/{}", name),
+            3 => format!("3/{}/{}", &name[..1], name),
+            _ => format!("{}/{}/{}", &name[..2], &name[2..4], name),
+        };
+
+        let dst = local_dst.join("index").join(&part);
+        assert!(!dst.exists());
+        try!(fs::create_dir_all(&dst.parent().unwrap()));
+
+        let pkg = RegistryPackage {
+            name: id.name().to_string(),
+            vers: id.version().to_string(),
+            deps: pkg.dependencies().iter().map(|dep| {
+                RegistryDependency {
+                    name: dep.name().to_string(),
+                    req: dep.version_req().to_string(),
+                    features: dep.features().to_owned(),
+                    optional: dep.is_optional(),
+                    default_features: dep.uses_default_features(),
+                    target: dep.platform().map(|platform| {
+                        match *platform {
+                            Platform::Name(ref s) => s.to_string(),
+                            Platform::Cfg(ref s) => format!("cfg({})", s),
+                        }
+                    }),
+                    kind: match dep.kind() {
+                        Kind::Normal => None,
+                        Kind::Development => Some("dev".to_string()),
+                        Kind::Build => Some("build".to_string()),
+                    },
+                }
+            }).collect(),
+            features: pkg.summary().features().clone(),
+            cksum: String::new(),
+            yanked: None,
+        };
+        let line = json::encode(&pkg).unwrap();
+
+        try!(File::create(&dst).and_then(|mut f| {
+            f.write_all(line.as_bytes())
+        }));
+    }
+
+    return Ok(());
+
+    fn build_ar(ar: &mut Builder<GzEncoder<File>>,
+                pkg: &Package,
+                config: &Config) {
+        let root = pkg.root();
+        let src = PathSource::new(pkg.root(),
+                                  pkg.package_id().source_id(),
+                                  config);
+        for file in src.list_files(pkg).unwrap().iter() {
+            let relative = cargo::util::without_prefix(&file, &root).unwrap();
+            let relative = relative.to_str().unwrap();
+            let mut file = File::open(file).unwrap();
+            let path = format!("{}-{}{}{}", pkg.name(), pkg.version(),
+                               path::MAIN_SEPARATOR, relative);
+
+            let mut header = Header::new_ustar();
+            let metadata = file.metadata().unwrap();
+            header.set_path(&path).unwrap();
+            header.set_metadata(&metadata);
+            header.set_cksum();
+
+            ar.append(&header, &mut file).unwrap();
+        }
+    }
 }
 
 fn read(path: &Path) -> CargoResult<String> {
