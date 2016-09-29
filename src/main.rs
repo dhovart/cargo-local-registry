@@ -10,7 +10,7 @@ use std::io::prelude::*;
 use std::path::{self, Path};
 
 use cargo::CliResult;
-use cargo::core::{SourceId, Dependency, Package};
+use cargo::core::{SourceId, Dependency, Workspace, Package};
 use cargo::core::dependency::{Kind, Platform};
 use cargo::sources::PathSource;
 use cargo::util::{human, ChainError, ToUrl, Config, CargoResult};
@@ -69,9 +69,11 @@ Options:
 }
 
 fn real_main(options: Options, config: &Config) -> CliResult<Option<()>> {
-    try!(config.configure_shell(options.flag_verbose,
-                                options.flag_quiet,
-                                &options.flag_color));
+    try!(config.configure(options.flag_verbose,
+                          options.flag_quiet,
+                          &options.flag_color,
+                          /* frozen = */ false,
+                          /* locked = */ false));
 
     let path = Path::new(&options.arg_path);
     let index = path.join("index");
@@ -82,7 +84,7 @@ fn real_main(options: Options, config: &Config) -> CliResult<Option<()>> {
     let id = try!(options.flag_host.map(|s| {
         s.to_url().map(|url| SourceId::for_registry(&url)).map_err(human)
     }).unwrap_or_else(|| {
-        SourceId::for_central(config)
+        SourceId::crates_io(config)
     }));
 
     let lockfile = match options.flag_sync {
@@ -121,10 +123,8 @@ fn sync(lockfile: &Path,
     let mut registry = registry_id.load(config);
     let manifest = lockfile.parent().unwrap().join("Cargo.toml");
     let manifest = env::current_dir().unwrap().join(&manifest);
-    let pkg = try!(Package::for_path(&manifest, config).chain_error(|| {
-        human("failed to load package")
-    }));
-    let resolve = try!(cargo::ops::load_pkg_lockfile(&pkg, config).chain_error(|| {
+    let ws = try!(Workspace::new(&manifest, config));
+    let resolve = try!(cargo::ops::load_pkg_lockfile(&ws).chain_error(|| {
         human("failed to load pkg lockfile")
     }));
     let resolve = try!(resolve.chain_error(|| {
@@ -213,10 +213,8 @@ fn sync_git(lockfile: &Path,
             config: &Config) -> CargoResult<()> {
     let manifest = lockfile.parent().unwrap().join("Cargo.toml");
     let manifest = env::current_dir().unwrap().join(&manifest);
-    let pkg = try!(Package::for_path(&manifest, config).chain_error(|| {
-        human("failed to load package")
-    }));
-    let resolve = try!(cargo::ops::load_pkg_lockfile(&pkg, config).chain_error(|| {
+    let ws = try!(Workspace::new(&manifest, config));
+    let resolve = try!(cargo::ops::load_pkg_lockfile(&ws).chain_error(|| {
         human("failed to load pkg lockfile")
     }));
     let resolve = try!(resolve.chain_error(|| {
