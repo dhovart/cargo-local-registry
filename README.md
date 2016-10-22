@@ -16,6 +16,9 @@ all of which currently originate from crates.io.
 The purpose of this subcommand will be to manage these registries and allow
 adding/deleting packages with ease.
 
+## Prerequisites
+
+As part of the build process libssh requires [cmake](https://cmake.org/download/). 
 
 ## Installation
 
