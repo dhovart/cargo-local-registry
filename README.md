@@ -18,7 +18,11 @@ adding/deleting packages with ease.
 
 ## Prerequisites
 
-As part of the build process libssh requires [cmake](https://cmake.org/download/). 
+As part of the build process you will need [gcc], [openssl] and [cmake] in your `PATH`.
+
+[gcc]: https://gcc.gnu.org/install/download.html
+[openssl]: https://www.openssl.org/source/
+[cmake]: https://cmake.org/download/
 
 ## Installation
 
