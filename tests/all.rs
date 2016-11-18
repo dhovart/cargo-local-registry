@@ -11,6 +11,9 @@ use tempdir::TempDir;
 fn cmd() -> Command {
     let mut me = env::current_exe().unwrap();
     me.pop();
+    if me.ends_with("deps") {
+        me.pop();
+    }
     me.push("cargo-local-registry");
     let mut cmd = Command::new(me);
     cmd.arg("local-registry");
