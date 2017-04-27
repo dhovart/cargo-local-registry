@@ -1,4 +1,5 @@
 extern crate cargo;
+extern crate env_logger;
 extern crate flate2;
 extern crate rustc_serialize;
 extern crate tar;
@@ -51,7 +52,10 @@ struct RegistryDependency {
 }
 
 fn main() {
-    cargo::execute_main_without_stdin(real_main, false, r#"
+    env_logger::init().unwrap();
+    let config = Config::default().unwrap();
+    let args = env::args().collect::<Vec<_>>();
+    let result = cargo::call_main_without_stdin(real_main, &config, r#"
 Vendor all dependencies for a project locally
 
 Usage:
@@ -65,10 +69,14 @@ Options:
     -v, --verbose            Use verbose output
     -q, --quiet              No output printed to stdout
     --color WHEN             Coloring: auto, always, never
-"#)
+"#, &args, false);
+
+    if let Err(e) = result {
+        cargo::exit_with_error(e, &mut *config.shell());
+    }
 }
 
-fn real_main(options: Options, config: &Config) -> CliResult<Option<()>> {
+fn real_main(options: Options, config: &Config) -> CliResult {
     try!(config.configure(options.flag_verbose,
                           options.flag_quiet,
                           &options.flag_color,
@@ -89,7 +97,7 @@ fn real_main(options: Options, config: &Config) -> CliResult<Option<()>> {
 
     let lockfile = match options.flag_sync {
         Some(ref file) => file,
-        None => return Ok(None),
+        None => return Ok(()),
     };
 
     try!(sync(Path::new(lockfile), &path, &id, config).chain_error(|| {
@@ -113,7 +121,7 @@ fn real_main(options: Options, config: &Config) -> CliResult<Option<()>> {
 
 ", id.url(), config.cwd().join(path).display());
 
-    Ok(None)
+    Ok(())
 }
 
 fn sync(lockfile: &Path,
@@ -137,8 +145,9 @@ fn sync(lockfile: &Path,
                      .collect::<Vec<_>>();
     for id in ids.iter() {
         let vers = format!("={}", id.version());
-        let dep = try!(Dependency::parse(id.name(), Some(&vers[..]),
-                                         id.source_id()));
+        let dep = try!(Dependency::parse_no_deprecated(id.name(),
+                                                       Some(&vers[..]),
+                                                       id.source_id()));
         let vec = try!(registry.query(&dep));
         if vec.len() == 0 {
             return Err(human(format!("could not find package: {}", id)))
@@ -231,7 +240,9 @@ fn sync_git(lockfile: &Path,
         if any_registry {
             panic!("git dependency shares names with other dep: {}", id.name());
         }
-        let dep = try!(Dependency::parse(id.name(), None, id.source_id()));
+        let dep = try!(Dependency::parse_no_deprecated(id.name(),
+                                                       None,
+                                                       id.source_id()));
         let mut source = id.source_id().load(config);
         try!(source.update());
         let vec = try!(source.query(&dep));
