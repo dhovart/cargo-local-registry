@@ -16,19 +16,36 @@ all of which currently originate from crates.io.
 The purpose of this subcommand will be to manage these registries and allow
 adding/deleting packages with ease.
 
-## Prerequisites
+## Installation
 
-As part of the build process you will need [gcc], [openssl] and [cmake] in your `PATH`.
+To install from source you can execute:
+
+```
+cargo install cargo-local-registry
+```
+
+Note that you'll need the build tools listed below for this to succeed. If you'd
+prefer to download precompiled binaries assembled on the CI for this repository,
+you may also use the [GitHub releases][releases]
+
+[releases]: https://github.com/alexcrichton/cargo-local-registry/releases
+
+## Building
+
+As part of the build process you will need [gcc], [openssl] and [cmake] in your
+`PATH`.
 
 [gcc]: https://gcc.gnu.org/install/download.html
 [openssl]: https://www.openssl.org/source/
 [cmake]: https://cmake.org/download/
 
-## Installation
+Afterwards you can build this repository via:
 
 ```
-cargo install cargo-local-registry
+cargo build
 ```
+
+And the resulting binary will be inside `target/debug`
 
 ## Usage
 
