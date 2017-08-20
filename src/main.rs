@@ -4,7 +4,7 @@ extern crate flate2;
 extern crate rustc_serialize;
 extern crate tar;
 
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::env;
 use std::fs::{self, File};
 use std::io::prelude::*;
@@ -35,12 +35,12 @@ struct RegistryPackage {
     name: String,
     vers: String,
     deps: Vec<RegistryDependency>,
-    features: HashMap<String, Vec<String>>,
+    features: BTreeMap<String, Vec<String>>,
     cksum: String,
     yanked: Option<bool>,
 }
 
-#[derive(RustcDecodable, RustcEncodable)]
+#[derive(Eq, Ord, PartialEq, PartialOrd, RustcDecodable, RustcEncodable)]
 struct RegistryDependency {
     name: String,
     req: String,
@@ -200,17 +200,16 @@ fn sync(lockfile: &Path,
         }));
 
         let prev = read(&dst).unwrap_or(String::new());
-        let mut prev = prev.lines().filter(|line| {
+        let mut prev_entries = prev.lines().filter(|line| {
             let pkg: RegistryPackage = rustc_serialize::json::decode(line).unwrap();
             pkg.vers != id.version().to_string()
-        }).collect::<Vec<_>>().join("\n");
-        if !prev.is_empty() {
-            prev.push_str("\n");
-        }
-        prev.push_str(&line);
+        }).collect::<Vec<_>>();
+        prev_entries.push(line);
+        prev_entries.sort();
+        let new_contents = prev_entries.join("\n");
 
         try!(File::create(&dst).and_then(|mut f| {
-            f.write_all(prev.as_bytes())
+            f.write_all(new_contents.as_bytes())
         }));
     }
 
@@ -275,30 +274,43 @@ fn sync_git(lockfile: &Path,
         assert!(!dst.exists());
         try!(fs::create_dir_all(&dst.parent().unwrap()));
 
+        let mut deps = pkg.dependencies().iter().map(|dep| {
+            RegistryDependency {
+                name: dep.name().to_string(),
+                req: dep.version_req().to_string(),
+                features: dep.features().to_owned(),
+                optional: dep.is_optional(),
+                default_features: dep.uses_default_features(),
+                target: dep.platform().map(|platform| {
+                    match *platform {
+                        Platform::Name(ref s) => s.to_string(),
+                        Platform::Cfg(ref s) => format!("cfg({})", s),
+                    }
+                }),
+                kind: match dep.kind() {
+                    Kind::Normal => None,
+                    Kind::Development => Some("dev".to_string()),
+                    Kind::Build => Some("build".to_string()),
+                },
+            }
+        }).collect::<Vec<_>>();
+        deps.sort();
+
+        let features = pkg.summary()
+                          .features()
+                          .into_iter()
+                          .map(|(k, v)| {
+                              let mut v = v.clone();
+                              v.sort();
+                              (k.clone(), v)
+                          })
+                          .collect();
+
         let pkg = RegistryPackage {
             name: id.name().to_string(),
             vers: id.version().to_string(),
-            deps: pkg.dependencies().iter().map(|dep| {
-                RegistryDependency {
-                    name: dep.name().to_string(),
-                    req: dep.version_req().to_string(),
-                    features: dep.features().to_owned(),
-                    optional: dep.is_optional(),
-                    default_features: dep.uses_default_features(),
-                    target: dep.platform().map(|platform| {
-                        match *platform {
-                            Platform::Name(ref s) => s.to_string(),
-                            Platform::Cfg(ref s) => format!("cfg({})", s),
-                        }
-                    }),
-                    kind: match dep.kind() {
-                        Kind::Normal => None,
-                        Kind::Development => Some("dev".to_string()),
-                        Kind::Build => Some("build".to_string()),
-                    },
-                }
-            }).collect(),
-            features: pkg.summary().features().clone(),
+            deps: deps,
+            features: features,
             cksum: String::new(),
             yanked: None,
         };
