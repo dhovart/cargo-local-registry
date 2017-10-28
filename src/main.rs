@@ -1,25 +1,28 @@
 extern crate cargo;
 extern crate env_logger;
 extern crate flate2;
-extern crate rustc_serialize;
 extern crate tar;
+#[macro_use]
+extern crate serde_derive;
+extern crate serde_json;
 
 use std::collections::BTreeMap;
 use std::env;
 use std::fs::{self, File};
 use std::io::prelude::*;
+use std::io;
 use std::path::{self, Path};
 
 use cargo::CliResult;
 use cargo::core::{SourceId, Dependency, Workspace, Package};
 use cargo::core::dependency::{Kind, Platform};
 use cargo::sources::PathSource;
-use cargo::util::{human, ChainError, ToUrl, Config, CargoResult};
+use cargo::util::{ToUrl, Config};
+use cargo::util::errors::*;
 use flate2::write::GzEncoder;
-use rustc_serialize::json;
 use tar::{Builder, Header};
 
-#[derive(RustcDecodable)]
+#[derive(Deserialize)]
 struct Options {
     arg_path: String,
     flag_sync: Option<String>,
@@ -30,7 +33,7 @@ struct Options {
     flag_git: bool,
 }
 
-#[derive(RustcDecodable, RustcEncodable)]
+#[derive(Deserialize, Serialize)]
 struct RegistryPackage {
     name: String,
     vers: String,
@@ -40,7 +43,7 @@ struct RegistryPackage {
     yanked: Option<bool>,
 }
 
-#[derive(Eq, Ord, PartialEq, PartialOrd, RustcDecodable, RustcEncodable)]
+#[derive(Eq, Ord, PartialEq, PartialOrd, Deserialize, Serialize)]
 struct RegistryDependency {
     name: String,
     req: String,
@@ -81,33 +84,33 @@ fn real_main(options: Options, config: &Config) -> CliResult {
                           options.flag_quiet,
                           &options.flag_color,
                           /* frozen = */ false,
-                          /* locked = */ false));
+                          /* locked = */ false,
+                          /* unstable flags = */ &[]));
 
     let path = Path::new(&options.arg_path);
     let index = path.join("index");
 
-    try!(fs::create_dir_all(&index).chain_error(|| {
-        human(format!("failed to create index: `{}`", index.display()))
+    try!(fs::create_dir_all(&index).chain_err(|| {
+        format!("failed to create index: `{}`", index.display())
     }));
-    let id = try!(options.flag_host.map(|s| {
-        s.to_url().map(|url| SourceId::for_registry(&url)).map_err(human)
-    }).unwrap_or_else(|| {
-        SourceId::crates_io(config)
-    }));
+    let id = match options.flag_host {
+        Some(ref s) => SourceId::for_registry(&s.to_url()?)?,
+        None => SourceId::crates_io(config)?,
+    };
 
     let lockfile = match options.flag_sync {
         Some(ref file) => file,
         None => return Ok(()),
     };
 
-    try!(sync(Path::new(lockfile), &path, &id, config).chain_error(|| {
-        human("failed to sync")
-    }));
+    sync(Path::new(lockfile), &path, &id, config).chain_err(|| {
+        "failed to sync"
+    })?;
 
     if options.flag_git {
-        try!(sync_git(Path::new(lockfile), &path, config).chain_error(|| {
-            human("failed to sync git repos")
-        }));
+        sync_git(Path::new(lockfile), &path, config).chain_err(|| {
+            "failed to sync git repos"
+        })?;
     }
 
     println!("add this to your .cargo/config somewhere:
@@ -128,16 +131,16 @@ fn sync(lockfile: &Path,
         local_dst: &Path,
         registry_id: &SourceId,
         config: &Config) -> CargoResult<()> {
-    let mut registry = registry_id.load(config);
+    let mut registry = registry_id.load(config)?;
     let manifest = lockfile.parent().unwrap().join("Cargo.toml");
     let manifest = env::current_dir().unwrap().join(&manifest);
-    let ws = try!(Workspace::new(&manifest, config));
-    let resolve = try!(cargo::ops::load_pkg_lockfile(&ws).chain_error(|| {
-        human("failed to load pkg lockfile")
-    }));
-    let resolve = try!(resolve.chain_error(|| {
-        human(format!("lock file `{}` does not exist", lockfile.display()))
-    }));
+    let ws = Workspace::new(&manifest, config)?;
+    let resolve = cargo::ops::load_pkg_lockfile(&ws).chain_err(|| {
+        "failed to load pkg lockfile"
+    })?;
+    let resolve = resolve.chain_err(|| {
+        format!("lock file `{}` does not exist", lockfile.display())
+    })?;
 
     let ids = resolve.iter()
                      .filter(|id| id.source_id() == registry_id)
@@ -145,20 +148,20 @@ fn sync(lockfile: &Path,
                      .collect::<Vec<_>>();
     for id in ids.iter() {
         let vers = format!("={}", id.version());
-        let dep = try!(Dependency::parse_no_deprecated(id.name(),
-                                                       Some(&vers[..]),
-                                                       id.source_id()));
-        let vec = try!(registry.query(&dep));
+        let dep = Dependency::parse_no_deprecated(id.name(),
+                                                  Some(&vers[..]),
+                                                  id.source_id())?;
+        let vec = registry.query_vec(&dep)?;
         if vec.len() == 0 {
-            return Err(human(format!("could not find package: {}", id)))
+            return Err(format!("could not find package: {}", id).into())
         }
         if vec.len() > 1 {
-            return Err(human(format!("found too many packages: {}", id)))
+            return Err(format!("found too many packages: {}", id).into())
         }
 
-        try!(registry.download(id).chain_error(|| {
-            human(format!("failed to download package from registry"))
-        }));
+        registry.download(id).chain_err(|| {
+            format!("failed to download package from registry")
+        })?;
     }
 
     let hash = cargo::util::hex::short_hash(registry_id);
@@ -172,10 +175,10 @@ fn sync(lockfile: &Path,
         let filename = format!("{}-{}.crate", id.name(), id.version());
         let src = cache.join(&filename).into_path_unlocked();
         let dst = local_dst.join(&filename);
-        try!(fs::copy(&src, &dst).chain_error(|| {
-            human(format!("failed to copy `{}` to `{}`", src.display(),
-                          dst.display()))
-        }));
+        fs::copy(&src, &dst).chain_err(|| {
+            format!("failed to copy `{}` to `{}`", src.display(),
+                    dst.display())
+        })?;
 
         let name = id.name();
         let part = match name.len() {
@@ -187,30 +190,30 @@ fn sync(lockfile: &Path,
 
         let src = index.join(&part).into_path_unlocked();
         let dst = local_dst.join("index").join(&part);
-        try!(fs::create_dir_all(&dst.parent().unwrap()));
+        fs::create_dir_all(&dst.parent().unwrap())?;
 
-        let contents = try!(read(&src));
+        let contents = read(&src)?;
 
         let line = contents.lines().find(|line| {
-            let pkg: RegistryPackage = rustc_serialize::json::decode(line).unwrap();
+            let pkg: RegistryPackage = serde_json::from_str(line).unwrap();
             pkg.vers == id.version().to_string()
         });
-        let line = try!(line.chain_error(|| {
-            human(format!("no version listed for {} in the index", id))
-        }));
+        let line = line.chain_err(|| {
+            format!("no version listed for {} in the index", id)
+        })?;
 
         let prev = read(&dst).unwrap_or(String::new());
         let mut prev_entries = prev.lines().filter(|line| {
-            let pkg: RegistryPackage = rustc_serialize::json::decode(line).unwrap();
+            let pkg: RegistryPackage = serde_json::from_str(line).unwrap();
             pkg.vers != id.version().to_string()
         }).collect::<Vec<_>>();
         prev_entries.push(line);
         prev_entries.sort();
         let new_contents = prev_entries.join("\n");
 
-        try!(File::create(&dst).and_then(|mut f| {
+        File::create(&dst).and_then(|mut f| {
             f.write_all(new_contents.as_bytes())
-        }));
+        })?;
     }
 
     Ok(())
@@ -221,13 +224,13 @@ fn sync_git(lockfile: &Path,
             config: &Config) -> CargoResult<()> {
     let manifest = lockfile.parent().unwrap().join("Cargo.toml");
     let manifest = env::current_dir().unwrap().join(&manifest);
-    let ws = try!(Workspace::new(&manifest, config));
-    let resolve = try!(cargo::ops::load_pkg_lockfile(&ws).chain_error(|| {
-        human("failed to load pkg lockfile")
-    }));
-    let resolve = try!(resolve.chain_error(|| {
-        human(format!("lock file `{}` does not exist", lockfile.display()))
-    }));
+    let ws = Workspace::new(&manifest, config)?;
+    let resolve = cargo::ops::load_pkg_lockfile(&ws).chain_err(|| {
+        "failed to load pkg lockfile"
+    })?;
+    let resolve = resolve.chain_err(|| {
+        format!("lock file `{}` does not exist", lockfile.display())
+    })?;
 
     let ids = resolve.iter()
                      .filter(|id| id.source_id().is_git())
@@ -239,21 +242,21 @@ fn sync_git(lockfile: &Path,
         if any_registry {
             panic!("git dependency shares names with other dep: {}", id.name());
         }
-        let dep = try!(Dependency::parse_no_deprecated(id.name(),
-                                                       None,
-                                                       id.source_id()));
-        let mut source = id.source_id().load(config);
-        try!(source.update());
-        let vec = try!(source.query(&dep));
+        let dep = Dependency::parse_no_deprecated(id.name(),
+                                                  None,
+                                                  id.source_id())?;
+        let mut source = id.source_id().load(config)?;
+        source.update()?;
+        let vec = source.query_vec(&dep)?;
         if vec.len() == 0 {
-            return Err(human(format!("could not find package: {}", id)))
+            return Err(format!("could not find package: {}", id).into())
         }
         if vec.len() > 1 {
-            return Err(human(format!("found too many packages: {}", id)))
+            return Err(format!("found too many packages: {}", id).into())
         }
-        let pkg = try!(source.download(id).chain_error(|| {
-            human(format!("failed to download package from registry"))
-        }));
+        let pkg = source.download(id).chain_err(|| {
+            format!("failed to download package from registry")
+        })?;
 
         let filename = format!("{}-{}.crate", id.name(), id.version());
         let dst = local_dst.join(&filename);
@@ -272,7 +275,7 @@ fn sync_git(lockfile: &Path,
 
         let dst = local_dst.join("index").join(&part);
         assert!(!dst.exists());
-        try!(fs::create_dir_all(&dst.parent().unwrap()));
+        fs::create_dir_all(&dst.parent().unwrap())?;
 
         let mut deps = pkg.dependencies().iter().map(|dep| {
             RegistryDependency {
@@ -314,11 +317,11 @@ fn sync_git(lockfile: &Path,
             cksum: String::new(),
             yanked: None,
         };
-        let line = json::encode(&pkg).unwrap();
+        let line = serde_json::to_string(&pkg).unwrap();
 
-        try!(File::create(&dst).and_then(|mut f| {
+        File::create(&dst).and_then(|mut f| {
             f.write_all(line.as_bytes())
-        }));
+        })?;
     }
 
     return Ok(());
@@ -349,12 +352,12 @@ fn sync_git(lockfile: &Path,
 }
 
 fn read(path: &Path) -> CargoResult<String> {
-    (|| {
+    (|| -> io::Result<_> {
         let mut contents = String::new();
-        let mut f = try!(File::open(path));
-        try!(f.read_to_string(&mut contents));
+        let mut f = File::open(path)?;
+        f.read_to_string(&mut contents)?;
         Ok(contents)
-    }).chain_error(|| {
-        human(format!("failed to read: {}", path.display()))
+    })().chain_err(|| {
+        format!("failed to read: {}", path.display())
     })
 }
