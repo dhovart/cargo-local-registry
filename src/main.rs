@@ -1,5 +1,7 @@
 extern crate cargo;
+extern crate docopt;
 extern crate env_logger;
+extern crate failure;
 extern crate flate2;
 extern crate tar;
 #[macro_use]
@@ -13,12 +15,12 @@ use std::io::prelude::*;
 use std::io;
 use std::path::{self, Path};
 
-use cargo::CliResult;
 use cargo::core::{SourceId, Workspace, Package};
 use cargo::core::dependency::{Kind, Platform};
 use cargo::sources::PathSource;
 use cargo::util::{ToUrl, Config};
 use cargo::util::errors::*;
+use docopt::Docopt;
 use flate2::write::GzEncoder;
 use tar::{Builder, Header};
 
@@ -55,10 +57,9 @@ struct RegistryDependency {
 }
 
 fn main() {
-    env_logger::init().unwrap();
-    let config = Config::default().unwrap();
-    let args = env::args().collect::<Vec<_>>();
-    let result = cargo::call_main_without_stdin(real_main, &config, r#"
+    env_logger::init();
+    let mut config = Config::default().unwrap();
+    let usage = r#"
 Vendor all dependencies for a project locally
 
 Usage:
@@ -72,19 +73,24 @@ Options:
     -v, --verbose            Use verbose output
     -q, --quiet              No output printed to stdout
     --color WHEN             Coloring: auto, always, never
-"#, &args, false);
+"#;
 
+    let options = Docopt::new(usage)
+        .and_then(|d| d.deserialize())
+        .unwrap_or_else(|e| e.exit());
+    let result = real_main(options, &mut config);
     if let Err(e) = result {
-        cargo::exit_with_error(e, &mut *config.shell());
+        cargo::exit_with_error(e.into(), &mut *config.shell());
     }
 }
 
-fn real_main(options: Options, config: &Config) -> CliResult {
+fn real_main(options: Options, config: &mut Config) -> CargoResult<()> {
     try!(config.configure(options.flag_verbose,
                           options.flag_quiet,
                           &options.flag_color,
                           /* frozen = */ false,
                           /* locked = */ false,
+                          /* target dir = */ &None,
                           /* unstable flags = */ &[]));
 
     let path = Path::new(&options.arg_path);
@@ -158,7 +164,7 @@ fn sync(lockfile: &Path,
             })?;
         } else {
             let file = File::create(&dst).unwrap();
-            let gz = GzEncoder::new(file, flate2::Compression::Best);
+            let gz = GzEncoder::new(file, flate2::Compression::best());
             let mut ar = Builder::new(gz);
             ar.mode(tar::HeaderMode::Deterministic);
             build_ar(&mut ar, &pkg, config);
@@ -223,7 +229,7 @@ fn registry_pkg(pkg: &Package) -> RegistryPackage {
         RegistryDependency {
             name: dep.name().to_string(),
             req: dep.version_req().to_string(),
-            features: dep.features().to_owned(),
+            features: dep.features().iter().map(|s| s.to_string()).collect(),
             optional: dep.is_optional(),
             default_features: dep.uses_default_features(),
             target: dep.platform().map(|platform| {
@@ -245,7 +251,9 @@ fn registry_pkg(pkg: &Package) -> RegistryPackage {
                       .features()
                       .into_iter()
                       .map(|(k, v)| {
-                          let mut v = v.clone();
+                          let mut v = v.iter()
+                              .map(|x| x.to_string(pkg.summary()))
+                              .collect::<Vec<_>>();
                           v.sort();
                           (k.clone(), v)
                       })
@@ -262,12 +270,13 @@ fn registry_pkg(pkg: &Package) -> RegistryPackage {
 }
 
 fn read(path: &Path) -> CargoResult<String> {
-    (|| -> io::Result<_> {
+    let s = (|| -> io::Result<_> {
         let mut contents = String::new();
         let mut f = File::open(path)?;
         f.read_to_string(&mut contents)?;
         Ok(contents)
     })().chain_err(|| {
         format!("failed to read: {}", path.display())
-    })
+    })?;
+    Ok(s)
 }
