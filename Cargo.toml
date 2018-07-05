@@ -14,7 +14,7 @@ A Cago subcommand for managing local registries.
 
 [dependencies]
 cargo = "0.22"
-env_logger = "0.4"
+env_logger = "0.5"
 flate2 = "0.2"
 serde = "1.0"
 serde_derive = "1.0"
