@@ -1,4 +1,4 @@
-extern crate tempdir;
+extern crate tempfile;
 
 use std::env;
 use std::fs::{self, File};
@@ -6,7 +6,7 @@ use std::io::prelude::*;
 use std::process::Command;
 use std::sync::{Once, Mutex, MutexGuard, ONCE_INIT};
 
-use tempdir::TempDir;
+use tempfile::TempDir;
 
 fn cmd() -> Command {
     let mut me = env::current_exe().unwrap();
@@ -41,7 +41,7 @@ fn help() {
 #[test]
 fn no_sync() {
     let _l = lock();
-    let td = TempDir::new("local-registry").unwrap();
+    let td = TempDir::new().unwrap();
     let output = run(cmd().arg(td.path()));
     assert!(td.path().join("index").exists());
     assert_eq!(output, "");
@@ -50,7 +50,7 @@ fn no_sync() {
 #[test]
 fn dst_no_exists() {
     let _l = lock();
-    let td = TempDir::new("local-registry").unwrap();
+    let td = TempDir::new().unwrap();
     let output = run(cmd().arg(td.path().join("foo")));
     assert!(td.path().join("foo/index").exists());
     assert_eq!(output, "");
@@ -59,7 +59,7 @@ fn dst_no_exists() {
 #[test]
 fn empty_cargo_lock() {
     let _l = lock();
-    let td = TempDir::new("local-registry").unwrap();
+    let td = TempDir::new().unwrap();
     let lock = td.path().join("Cargo.lock");
     let registry = td.path().join("registry");
     fs::create_dir(td.path().join("src")).unwrap();
@@ -85,7 +85,7 @@ dependencies = []
 #[test]
 fn libc_dependency() {
     let _l = lock();
-    let td = TempDir::new("local-registry").unwrap();
+    let td = TempDir::new().unwrap();
     let lock = td.path().join("Cargo.lock");
     let registry = td.path().join("registry");
     fs::create_dir(td.path().join("src")).unwrap();
@@ -149,7 +149,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 #[test]
 fn git_dependency() {
     let _l = lock();
-    let td = TempDir::new("local-registry").unwrap();
+    let td = TempDir::new().unwrap();
     let lock = td.path().join("Cargo.lock");
     let registry = td.path().join("registry");
     fs::create_dir(td.path().join("src")).unwrap();
@@ -185,7 +185,7 @@ source = "git+https://github.com/rust-lang/libc#36bec35aeb600bb1b8b47f4985a84a8d
 
 #[test]
 fn deterministic() {
-    let td = TempDir::new("local-registry").unwrap();
+    let td = TempDir::new().unwrap();
     let lock = td.path().join("Cargo.lock");
     let registry = td.path().join("registry");
     fs::create_dir(td.path().join("src")).unwrap();
