@@ -13,6 +13,10 @@ install:
   - rustc -V
   - cargo -V
 
+branches:
+  only:
+    - master
+
 build: false
 
 test_script:

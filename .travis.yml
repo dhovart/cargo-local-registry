@@ -6,6 +6,7 @@ dist: trusty
 matrix:
   include:
     - rust: nightly
+
     - env: TARGET=x86_64-unknown-linux-musl DEPLOY=1
       before_script:
         - rustup target add $TARGET
@@ -16,16 +17,16 @@ matrix:
           make install)
         - export OPENSSL_DIR=$HOME/openssl-musl
       script: cargo build --release --target $TARGET --locked
+      addons:
+        apt:
+          packages:
+          - musl-tools
 
     - os: osx
     - os: osx
       env: MACOSX_DEPLOYMENT_TARGET=10.7 DEPLOY=1 TARGET=x86_64-apple-darwin OPENSSL_STATIC=1
       script: cargo build --release --target $TARGET --locked
 
-addons:
-  apt:
-    packages:
-    - musl-tools
 
 script:
   - cargo test --locked
@@ -40,6 +41,10 @@ before_deploy:
   - cp target/$TARGET/release/cargo-local-registry $name/
   - cp README.md LICENSE-MIT LICENSE-APACHE $name/
   - tar czvf $name.tar.gz $name
+
+branches:
+  only:
+  - master
 
 deploy:
   api_key:
