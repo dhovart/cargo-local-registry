@@ -102,7 +102,7 @@ name = "cargo-local-registry"
 version = "0.1.5"
 dependencies = [
  "cargo 0.29.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "docopt 1.0.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "docopt 1.0.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "env_logger 0.5.13 (registry+https://github.com/rust-lang/crates.io-index)",
  "failure 0.1.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "flate2 1.0.2 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -244,7 +244,7 @@ dependencies = [
 
 [[package]]
 name = "docopt"
-version = "1.0.0"
+version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 dependencies = [
  "lazy_static 1.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -1048,7 +1048,7 @@ dependencies = [
 "checksum crypto-hash 0.3.1 (registry+https://github.com/rust-lang/crates.io-index)" = "09de9ee0fc255ace04c7fa0763c9395a945c37c8292bb554f8d48361d1dcf1b4"
 "checksum curl 0.4.14 (registry+https://github.com/rust-lang/crates.io-index)" = "444c2f9e71458b34e75471ed8d756947a0bb920b8b8b9bfc56dfcc4fc6819a13"
 "checksum curl-sys 0.4.8 (registry+https://github.com/rust-lang/crates.io-index)" = "981bd902fcd8b8b999cf71b81447e27d66c3493a7f62f1372866fd32986c0c82"
-"checksum docopt 1.0.0 (registry+https://github.com/rust-lang/crates.io-index)" = "e67fb750c36fc6fffbd3575cf8f2b46790fc0b05096ae3c03a36cf71b55e1e2b"
+"checksum docopt 1.0.1 (registry+https://github.com/rust-lang/crates.io-index)" = "d60c92df70dfaaabecc14b409fd79f55ba0f247780529db1d73bfa601e1d3ac0"
 "checksum env_logger 0.5.13 (registry+https://github.com/rust-lang/crates.io-index)" = "15b0a4d2e39f8420210be8b27eeda28029729e2fd4291019455016c348240c38"
 "checksum failure 0.1.2 (registry+https://github.com/rust-lang/crates.io-index)" = "7efb22686e4a466b1ec1a15c2898f91fa9cb340452496dca654032de20ff95b9"
 "checksum failure_derive 0.1.2 (registry+https://github.com/rust-lang/crates.io-index)" = "946d0e98a50d9831f5d589038d2ca7f8f455b1c21028c0db0e84116a12696426"
