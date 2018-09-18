@@ -227,7 +227,7 @@ fn registry_pkg(pkg: &Package) -> RegistryPackage {
     let id = pkg.package_id();
     let mut deps = pkg.dependencies().iter().map(|dep| {
         RegistryDependency {
-            name: dep.name().to_string(),
+            name: dep.package_name().to_string(),
             req: dep.version_req().to_string(),
             features: dep.features().iter().map(|s| s.to_string()).collect(),
             optional: dep.is_optional(),
@@ -255,7 +255,7 @@ fn registry_pkg(pkg: &Package) -> RegistryPackage {
                               .map(|x| x.to_string(pkg.summary()))
                               .collect::<Vec<_>>();
                           v.sort();
-                          (k.clone(), v)
+                          (k.to_string(), v)
                       })
                       .collect();
 
