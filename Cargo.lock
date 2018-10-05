@@ -73,7 +73,7 @@ dependencies = [
  "env_logger 0.5.13 (registry+https://github.com/rust-lang/crates.io-index)",
  "failure 0.1.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "filetime 0.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
- "flate2 1.0.2 (registry+https://github.com/rust-lang/crates.io-index)",
+ "flate2 1.0.3 (registry+https://github.com/rust-lang/crates.io-index)",
  "fs2 0.4.3 (registry+https://github.com/rust-lang/crates.io-index)",
  "git2 0.7.5 (registry+https://github.com/rust-lang/crates.io-index)",
  "git2-curl 0.8.1 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -115,7 +115,7 @@ dependencies = [
  "docopt 1.0.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "env_logger 0.5.13 (registry+https://github.com/rust-lang/crates.io-index)",
  "failure 0.1.2 (registry+https://github.com/rust-lang/crates.io-index)",
- "flate2 1.0.2 (registry+https://github.com/rust-lang/crates.io-index)",
+ "flate2 1.0.3 (registry+https://github.com/rust-lang/crates.io-index)",
  "openssl 0.10.12 (registry+https://github.com/rust-lang/crates.io-index)",
  "serde 1.0.79 (registry+https://github.com/rust-lang/crates.io-index)",
  "serde_derive 1.0.79 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -325,7 +325,7 @@ dependencies = [
 
 [[package]]
 name = "flate2"
-version = "1.0.2"
+version = "1.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 dependencies = [
  "libc 0.2.43 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -1177,7 +1177,7 @@ dependencies = [
 "checksum failure 0.1.2 (registry+https://github.com/rust-lang/crates.io-index)" = "7efb22686e4a466b1ec1a15c2898f91fa9cb340452496dca654032de20ff95b9"
 "checksum failure_derive 0.1.2 (registry+https://github.com/rust-lang/crates.io-index)" = "946d0e98a50d9831f5d589038d2ca7f8f455b1c21028c0db0e84116a12696426"
 "checksum filetime 0.2.1 (registry+https://github.com/rust-lang/crates.io-index)" = "da4b9849e77b13195302c174324b5ba73eec9b236b24c221a61000daefb95c5f"
-"checksum flate2 1.0.2 (registry+https://github.com/rust-lang/crates.io-index)" = "37847f133aae7acf82bb9577ccd8bda241df836787642654286e79679826a54b"
+"checksum flate2 1.0.3 (registry+https://github.com/rust-lang/crates.io-index)" = "4af030962d89d62aa52cd9492083b1cd9b2d1a77764878102a6c0f86b4d5444d"
 "checksum fnv 1.0.6 (registry+https://github.com/rust-lang/crates.io-index)" = "2fad85553e09a6f881f739c29f0b00b0f01357c743266d478b68951ce23285f3"
 "checksum foreign-types 0.3.2 (registry+https://github.com/rust-lang/crates.io-index)" = "f6f339eb8adc052cd2ca78910fda869aefa38d22d5cb648e6485e4d3fc06f3b1"
 "checksum foreign-types-shared 0.1.1 (registry+https://github.com/rust-lang/crates.io-index)" = "00b0228411908ca8685dba7fc2cdd70ec9990a6e753e89b6ac91a84c40fbaf4b"
