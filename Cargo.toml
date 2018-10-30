@@ -13,7 +13,7 @@ A Cago subcommand for managing local registries.
 """
 
 [dependencies]
-cargo = "0.30"
+cargo = "0.31"
 docopt = "1.0"
 env_logger = "0.5"
 failure = "0.1"
