@@ -138,6 +138,7 @@ fn sync(lockfile: &Path,
     let (packages, resolve) = cargo::ops::resolve_ws(&ws).chain_err(|| {
         "failed to load pkg lockfile"
     })?;
+    packages.get_many(resolve.iter())?;
     let hash = cargo::util::hex::short_hash(registry_id);
     let ident = registry_id.url().host().unwrap().to_string();
     let part = format!("{}-{}", ident, hash);
@@ -153,7 +154,7 @@ fn sync(lockfile: &Path,
             continue
         }
 
-        let pkg = packages.get(&id).chain_err(|| "failed to fetch package")?;
+        let pkg = packages.get_one(&id).chain_err(|| "failed to fetch package")?;
         let filename = format!("{}-{}.crate", id.name(), id.version());
         let dst = local_dst.join(&filename);
         if id.source_id().is_registry() {
