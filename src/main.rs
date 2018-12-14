@@ -58,7 +58,20 @@ struct RegistryDependency {
 
 fn main() {
     env_logger::init();
-    let mut config = Config::default().unwrap();
+
+    // We're doing the vendoring operation outselves, so we don't actually want
+    // to respect any of the `source` configuration in Cargo itself. That's
+    // intended for other consumers of Cargo, but we want to go straight to the
+    // source, e.g. crates.io, to fetch crates.
+    let mut config = {
+        let config_orig = Config::default().unwrap();
+        let mut values = config_orig.values().unwrap().clone();
+        values.remove("source");
+        let config = Config::default().unwrap();
+        config.set_values(values).unwrap();
+        config
+    };
+
     let usage = r#"
 Vendor all dependencies for a project locally
 
