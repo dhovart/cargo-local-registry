@@ -8,12 +8,12 @@ extern crate tar;
 extern crate serde_derive;
 extern crate serde_json;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::env;
 use std::fs::{self, File};
 use std::io::prelude::*;
 use std::io;
-use std::path::{self, Path};
+use std::path::{self, Path, PathBuf};
 
 use cargo::core::{SourceId, Workspace, Package};
 use cargo::core::dependency::{Kind, Platform};
@@ -27,6 +27,7 @@ use tar::{Builder, Header};
 #[derive(Deserialize)]
 struct Options {
     arg_path: String,
+    flag_delete_unused: Option<bool>,
     flag_sync: Option<String>,
     flag_host: Option<String>,
     flag_verbose: u32,
@@ -86,6 +87,7 @@ Options:
     -v, --verbose            Use verbose output
     -q, --quiet              No output printed to stdout
     --color WHEN             Coloring: auto, always, never
+    --delete-unused          Delete older crates in the local registry directory
 "#;
 
     let options = Docopt::new(usage)
@@ -145,6 +147,8 @@ fn sync(lockfile: &Path,
         registry_id: &SourceId,
         options: &Options,
         config: &Config) -> CargoResult<()> {
+    let delete_unused = options.flag_delete_unused.unwrap_or(false);
+    let canonical_local_dst = local_dst.canonicalize().unwrap_or(local_dst.to_path_buf());
     let manifest = lockfile.parent().unwrap().join("Cargo.toml");
     let manifest = env::current_dir().unwrap().join(&manifest);
     let ws = Workspace::new(&manifest, config)?;
@@ -158,6 +162,8 @@ fn sync(lockfile: &Path,
 
     let cache = config.registry_cache_path().join(&part);
 
+    let mut added_crates = HashSet::new();
+    let mut added_index = HashSet::new();
     for id in resolve.iter() {
         if id.source_id().is_git() {
             if !options.flag_git {
@@ -169,7 +175,7 @@ fn sync(lockfile: &Path,
 
         let pkg = packages.get_one(&id).chain_err(|| "failed to fetch package")?;
         let filename = format!("{}-{}.crate", id.name(), id.version());
-        let dst = local_dst.join(&filename);
+        let dst = canonical_local_dst.join(&filename);
         if id.source_id().is_registry() {
             let src = cache.join(&filename).into_path_unlocked();
             fs::copy(&src, &dst).chain_err(|| {
@@ -183,6 +189,7 @@ fn sync(lockfile: &Path,
             ar.mode(tar::HeaderMode::Deterministic);
             build_ar(&mut ar, &pkg, config);
         }
+        added_crates.insert(dst);
 
         let name = id.name().to_lowercase();
         let part = match name.len() {
@@ -192,11 +199,17 @@ fn sync(lockfile: &Path,
             _ => format!("{}/{}/{}", &name[..2], &name[2..4], name),
         };
 
-        let dst = local_dst.join("index").join(&part);
+        let dst = canonical_local_dst.join("index").join(&part);
         fs::create_dir_all(&dst.parent().unwrap())?;
         let line = serde_json::to_string(&registry_pkg(&pkg)).unwrap();
 
-        let prev = read(&dst).unwrap_or(String::new());
+        // If cleaning old entries, don't read the file unless we wrote it in one of the previous
+        // iterations.
+        let prev = if delete_unused && !added_index.contains(&dst) {
+            String::new()
+        } else {
+            read(&dst).unwrap_or(String::new())
+        };
         let mut prev_entries = prev.lines().filter(|line| {
             let pkg: RegistryPackage = serde_json::from_str(line).unwrap();
             pkg.vers != id.version().to_string()
@@ -208,8 +221,45 @@ fn sync(lockfile: &Path,
         File::create(&dst).and_then(|mut f| {
             f.write_all(new_contents.as_bytes())
         })?;
+        added_index.insert(dst);
     }
 
+    if delete_unused {
+        let existing_crates: Vec<PathBuf> = canonical_local_dst
+            .read_dir()
+            .map(|iter| iter
+                .filter_map(|e| e.ok())
+                .filter(|e| e.file_name().to_str().map_or(false, |name| name.ends_with(".crate")))
+                .map(|e| e.path())
+                .collect::<Vec<_>>())
+            .unwrap_or_else(|_| Vec::new());
+
+        for path in existing_crates {
+            if !added_crates.contains(&path) {
+                fs::remove_file(&path)?;
+            }
+        }
+
+        scan_delete(&canonical_local_dst.join("index"), 3, &added_index)?;
+    }
+    Ok(())
+}
+
+fn scan_delete(path: &Path, depth: usize, keep: &HashSet<PathBuf>) -> CargoResult<()> {
+    if path.is_file() && !keep.contains(path) {
+        fs::remove_file(&path)?;
+    } else if path.is_dir() && depth > 0 {
+        for entry in path.read_dir()? {
+            if let Ok(entry) = entry {
+                scan_delete(&entry.path(), depth - 1, keep)?;
+            }
+        }
+
+        let is_empty = path.read_dir()?.next().is_none();
+        if is_empty {
+            fs::remove_dir(path)?;
+        }
+    }
     Ok(())
 }
 
