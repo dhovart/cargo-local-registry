@@ -184,7 +184,7 @@ fn sync(lockfile: &Path,
             build_ar(&mut ar, &pkg, config);
         }
 
-        let name = id.name();
+        let name = id.name().to_lowercase();
         let part = match name.len() {
             1 => format!("1/{}", name),
             2 => format!("2/{}", name),
