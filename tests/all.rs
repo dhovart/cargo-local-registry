@@ -280,6 +280,48 @@ dependencies = [
 {"name":"libc","vers":"0.2.7","deps":[],"cksum":"4870ef6725dde13394134e587e4ab4eca13cb92e916209a31c851b49131d3c75","features":{"default":[]},"yanked":false}"#);
 }
 
+#[test]
+fn lowercased() {
+    let td = TempDir::new().unwrap();
+    let lock = td.path().join("Cargo.lock");
+    let registry = td.path().join("registry");
+    fs::create_dir(td.path().join("src")).unwrap();
+    File::create(&td.path().join("Cargo.toml")).unwrap().write_all(br#"
+        [package]
+        name = "foo"
+        version = "0.1.0"
+        authors = []
+
+        [dependencies]
+        Inflector = "0.11.3"
+    "#).unwrap();
+    File::create(&td.path().join("src/lib.rs")).unwrap().write_all(b"").unwrap();
+    File::create(&lock).unwrap().write_all(br#"
+[[package]]
+name = "foo"
+version = "0.1.0"
+dependencies = [
+ "Inflector 0.11.3 (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
+name = "Inflector"
+version = "0.11.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+"#).unwrap();
+    run(cmd().arg(&registry).arg("--sync").arg(&lock));
+
+    let mut contents = String::new();
+    let path = registry.join("index/in/fl/inflector");
+    let path = fs::canonicalize(path).unwrap();
+    
+    assert_eq!(path.file_name().unwrap(), "inflector");
+
+    File::open(registry.join("index/in/fl/inflector")).unwrap()
+        .read_to_string(&mut contents).unwrap();
+    assert_eq!(contents, r#"{"name":"Inflector","vers":"0.11.3","deps":[{"name":"lazy_static","req":"^1.0.0","features":[],"optional":true,"default_features":true,"target":null,"kind":null},{"name":"regex","req":"^1.0","features":[],"optional":true,"default_features":true,"target":null,"kind":null}],"cksum":"4467f98bb61f615f8273359bf1c989453dfc1ea4a45ae9298f1dcd0672febe5d","features":{"default":["heavyweight"],"heavyweight":["lazy_static","regex"],"unstable":[]},"yanked":false}"#);
+}
+
 fn run(cmd: &mut Command) -> String {
     let output = cmd.output().unwrap();
     if !output.status.success() {
