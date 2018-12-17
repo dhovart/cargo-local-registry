@@ -27,7 +27,7 @@ use tar::{Builder, Header};
 #[derive(Deserialize)]
 struct Options {
     arg_path: String,
-    flag_delete_unused: Option<bool>,
+    flag_no_delete: Option<bool>,
     flag_sync: Option<String>,
     flag_host: Option<String>,
     flag_verbose: u32,
@@ -87,7 +87,7 @@ Options:
     -v, --verbose            Use verbose output
     -q, --quiet              No output printed to stdout
     --color WHEN             Coloring: auto, always, never
-    --delete-unused          Delete older crates in the local registry directory
+    --no-delete              Don't delete older crates in the local registry directory
 "#;
 
     let options = Docopt::new(usage)
@@ -147,7 +147,7 @@ fn sync(lockfile: &Path,
         registry_id: &SourceId,
         options: &Options,
         config: &Config) -> CargoResult<()> {
-    let delete_unused = options.flag_delete_unused.unwrap_or(false);
+    let no_delete = options.flag_no_delete.unwrap_or(false);
     let canonical_local_dst = local_dst.canonicalize().unwrap_or(local_dst.to_path_buf());
     let manifest = lockfile.parent().unwrap().join("Cargo.toml");
     let manifest = env::current_dir().unwrap().join(&manifest);
@@ -203,12 +203,12 @@ fn sync(lockfile: &Path,
         fs::create_dir_all(&dst.parent().unwrap())?;
         let line = serde_json::to_string(&registry_pkg(&pkg)).unwrap();
 
-        // If cleaning old entries, don't read the file unless we wrote it in one of the previous
-        // iterations.
-        let prev = if delete_unused && !added_index.contains(&dst) {
-            String::new()
-        } else {
+        let prev = if no_delete || added_index.contains(&dst) {
             read(&dst).unwrap_or(String::new())
+        } else {
+            // If cleaning old entries (no_delete is not set), don't read the file unless we wrote
+            // it in one of the previous iterations.
+            String::new()
         };
         let mut prev_entries = prev.lines().filter(|line| {
             let pkg: RegistryPackage = serde_json::from_str(line).unwrap();
@@ -224,7 +224,7 @@ fn sync(lockfile: &Path,
         added_index.insert(dst);
     }
 
-    if delete_unused {
+    if !no_delete {
         let existing_crates: Vec<PathBuf> = canonical_local_dst
             .read_dir()
             .map(|iter| iter

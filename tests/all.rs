@@ -414,7 +414,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 "#).unwrap();
 
     // Run again -- no delete unused
-    run(cmd().arg(&registry).arg("--sync").arg(&lock));
+    run(cmd().arg(&registry).arg("--no-delete").arg("--sync").arg(&lock));
 
     assert!(registry.join("language-tags-0.2.2.crate").exists());
     assert!(registry.join("lazy_static-0.2.11.crate").exists());
@@ -437,8 +437,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
         .read_to_string(&mut contents).unwrap();
     assert_eq!(contents, r#"{"name":"language-tags","vers":"0.2.2","deps":[{"name":"heapsize","req":">= 0.2.2, < 0.4","features":[],"optional":true,"default_features":true,"target":null,"kind":null},{"name":"heapsize_plugin","req":"^0.1.2","features":[],"optional":true,"default_features":true,"target":null,"kind":null}],"cksum":"a91d884b6667cd606bb5a69aa0c99ba811a115fc68915e7056ec08a46e93199a","features":{"heap_size":["heapsize","heapsize_plugin"]},"yanked":false}"#);
 
-    // Run for the third time -- delete unused
-    run(cmd().arg(&registry).arg("--sync").arg(&lock).arg("--delete-unused"));
+    // Run for the third time -- delete unused (default)
+    run(cmd().arg(&registry).arg("--sync").arg(&lock));
 
     // should be deleted
     assert!(!registry.join("language-tags-0.2.2.crate").exists());
