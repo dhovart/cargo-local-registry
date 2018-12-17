@@ -192,14 +192,13 @@ fn sync(lockfile: &Path,
         added_crates.insert(dst);
 
         let name = id.name().to_lowercase();
-        let part = match name.len() {
-            1 => format!("1/{}", name),
-            2 => format!("2/{}", name),
-            3 => format!("3/{}/{}", &name[..1], name),
-            _ => format!("{}/{}/{}", &name[..2], &name[2..4], name),
+        let index_dir = canonical_local_dst.join("index");
+        let dst = match name.len() {
+            1 => index_dir.join("1").join(name),
+            2 => index_dir.join("2").join(name),
+            3 => index_dir.join("3").join(&name[..1]).join(name),
+            _ => index_dir.join(&name[..2]).join(&name[2..4]).join(name),
         };
-
-        let dst = canonical_local_dst.join("index").join(&part);
         fs::create_dir_all(&dst.parent().unwrap())?;
         let line = serde_json::to_string(&registry_pkg(&pkg)).unwrap();
 
