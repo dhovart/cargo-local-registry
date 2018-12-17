@@ -136,14 +136,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
     assert!(registry.join("index").is_dir());
     assert!(registry.join("index/li/bc/libc").is_file());
     assert!(registry.join("libc-0.2.6.crate").is_file());
-    assert!(registry.join("libc-0.2.7.crate").is_file());
+    assert!(!registry.join("libc-0.2.7.crate").exists());
 
     let mut contents = String::new();
     File::open(registry.join("index/li/bc/libc")).unwrap()
         .read_to_string(&mut contents).unwrap();
-    assert_eq!(contents.lines().count(), 2);
+    assert_eq!(contents.lines().count(), 1);
     assert!(contents.contains("0.2.6"));
-    assert!(contents.contains("0.2.7"));
 }
 
 #[test]
@@ -276,8 +275,7 @@ dependencies = [
     File::open(registry.join("index/li/bc/libc")).unwrap()
         .read_to_string(&mut contents).unwrap();
     assert_eq!(contents, r#"{"name":"libc","vers":"0.1.4","deps":[],"cksum":"93a57b3496432ca744a67300dae196f8d4bbe33dfa7dc27adabfb6faa4643bb2","features":{"cargo-build":[],"default":["cargo-build"]},"yanked":false}
-{"name":"libc","vers":"0.2.6","deps":[],"cksum":"b608bf5e09bb38b075938d5d261682511bae283ef4549cc24fa66b1b8050de7b","features":{"default":[]},"yanked":false}
-{"name":"libc","vers":"0.2.7","deps":[],"cksum":"4870ef6725dde13394134e587e4ab4eca13cb92e916209a31c851b49131d3c75","features":{"default":[]},"yanked":false}"#);
+{"name":"libc","vers":"0.2.6","deps":[],"cksum":"b608bf5e09bb38b075938d5d261682511bae283ef4549cc24fa66b1b8050de7b","features":{"default":[]},"yanked":false}"#);
 }
 
 #[test]
@@ -462,7 +460,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 }
 
 fn run(cmd: &mut Command) -> String {
-    let output = cmd.output().unwrap();
+    let output = cmd.env("RUST_BACKTRACE", "1").output().unwrap();
     if !output.status.success() {
         panic!("failed to run {:?}\n--- stdout\n{}\n--- stderr\n{}", cmd,
                String::from_utf8_lossy(&output.stdout),

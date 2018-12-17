@@ -255,7 +255,8 @@ fn scan_delete(path: &Path, depth: usize, keep: &HashSet<PathBuf>) -> CargoResul
         }
 
         let is_empty = path.read_dir()?.next().is_none();
-        if is_empty {
+        // Don't delete "index" itself
+        if is_empty && depth != 3 {
             fs::remove_dir(path)?;
         }
     }
