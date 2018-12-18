@@ -136,14 +136,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
     assert!(registry.join("index").is_dir());
     assert!(registry.join("index/li/bc/libc").is_file());
     assert!(registry.join("libc-0.2.6.crate").is_file());
-    assert!(registry.join("libc-0.2.7.crate").is_file());
+    assert!(!registry.join("libc-0.2.7.crate").exists());
 
     let mut contents = String::new();
     File::open(registry.join("index/li/bc/libc")).unwrap()
         .read_to_string(&mut contents).unwrap();
-    assert_eq!(contents.lines().count(), 2);
+    assert_eq!(contents.lines().count(), 1);
     assert!(contents.contains("0.2.6"));
-    assert!(contents.contains("0.2.7"));
 }
 
 #[test]
@@ -276,8 +275,7 @@ dependencies = [
     File::open(registry.join("index/li/bc/libc")).unwrap()
         .read_to_string(&mut contents).unwrap();
     assert_eq!(contents, r#"{"name":"libc","vers":"0.1.4","deps":[],"cksum":"93a57b3496432ca744a67300dae196f8d4bbe33dfa7dc27adabfb6faa4643bb2","features":{"cargo-build":[],"default":["cargo-build"]},"yanked":false}
-{"name":"libc","vers":"0.2.6","deps":[],"cksum":"b608bf5e09bb38b075938d5d261682511bae283ef4549cc24fa66b1b8050de7b","features":{"default":[]},"yanked":false}
-{"name":"libc","vers":"0.2.7","deps":[],"cksum":"4870ef6725dde13394134e587e4ab4eca13cb92e916209a31c851b49131d3c75","features":{"default":[]},"yanked":false}"#);
+{"name":"libc","vers":"0.2.6","deps":[],"cksum":"b608bf5e09bb38b075938d5d261682511bae283ef4549cc24fa66b1b8050de7b","features":{"default":[]},"yanked":false}"#);
 }
 
 #[test]
@@ -322,8 +320,147 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
     assert_eq!(contents, r#"{"name":"Inflector","vers":"0.11.3","deps":[{"name":"lazy_static","req":"^1.0.0","features":[],"optional":true,"default_features":true,"target":null,"kind":null},{"name":"regex","req":"^1.0","features":[],"optional":true,"default_features":true,"target":null,"kind":null}],"cksum":"4467f98bb61f615f8273359bf1c989453dfc1ea4a45ae9298f1dcd0672febe5d","features":{"default":["heavyweight"],"heavyweight":["lazy_static","regex"],"unstable":[]},"yanked":false}"#);
 }
 
+#[test]
+fn clean_mode() {
+    let td = TempDir::new().unwrap();
+    let lock = td.path().join("Cargo.lock");
+    let registry = td.path().join("registry");
+    fs::create_dir(td.path().join("src")).unwrap();
+    File::create(&td.path().join("Cargo.toml")).unwrap().write_all(br#"
+        [package]
+        name = "foo"
+        version = "0.1.0"
+        authors = []
+
+        [dependencies]
+        lazy_static = "0.2.11"
+        language-tags = "0.2.2"
+    "#).unwrap();
+    File::create(&td.path().join("src/lib.rs")).unwrap().write_all(b"").unwrap();
+    File::create(&lock).unwrap().write_all(br#"
+[[package]]
+name = "foo"
+version = "0.1.0"
+dependencies = [
+ "language-tags 0.2.2 (registry+https://github.com/rust-lang/crates.io-index)",
+ "lazy_static 0.2.11 (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
+name = "language-tags"
+version = "0.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+
+[[package]]
+name = "lazy_static"
+version = "0.2.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+
+[metadata]
+"checksum language-tags 0.2.2 (registry+https://github.com/rust-lang/crates.io-index)" = "a91d884b6667cd606bb5a69aa0c99ba811a115fc68915e7056ec08a46e93199a"
+"checksum lazy_static 0.2.11 (registry+https://github.com/rust-lang/crates.io-index)" = "76f033c7ad61445c5b347c7382dd1237847eb1bce590fe50365dcb33d546be73"
+"#).unwrap();
+    run(cmd().arg(&registry).arg("--sync").arg(&lock));
+
+    assert!(registry.join("language-tags-0.2.2.crate").exists());
+    assert!(registry.join("lazy_static-0.2.11.crate").exists());
+
+    let mut contents = String::new();
+    File::open(registry.join("index/la/zy/lazy_static")).unwrap()
+        .read_to_string(&mut contents).unwrap();
+    assert_eq!(contents, r#"{"name":"lazy_static","vers":"0.2.11","deps":[{"name":"compiletest_rs","req":"^0.3","features":[],"optional":true,"default_features":true,"target":null,"kind":null},{"name":"spin","req":"^0.4.6","features":[],"optional":true,"default_features":true,"target":null,"kind":null}],"cksum":"76f033c7ad61445c5b347c7382dd1237847eb1bce590fe50365dcb33d546be73","features":{"compiletest":["compiletest_rs"],"nightly":[],"spin_no_std":["nightly","spin"]},"yanked":false}"#);
+
+    contents.clear();
+    File::open(registry.join("index/la/ng/language-tags")).unwrap()
+        .read_to_string(&mut contents).unwrap();
+    assert_eq!(contents, r#"{"name":"language-tags","vers":"0.2.2","deps":[{"name":"heapsize","req":">= 0.2.2, < 0.4","features":[],"optional":true,"default_features":true,"target":null,"kind":null},{"name":"heapsize_plugin","req":"^0.1.2","features":[],"optional":true,"default_features":true,"target":null,"kind":null}],"cksum":"a91d884b6667cd606bb5a69aa0c99ba811a115fc68915e7056ec08a46e93199a","features":{"heap_size":["heapsize","heapsize_plugin"]},"yanked":false}"#);
+
+    // Modify the Cargo.toml to swap an existing library, add a new one and delete another
+    File::create(&td.path().join("Cargo.toml")).unwrap().write_all(br#"
+        [package]
+        name = "foo"
+        version = "0.1.0"
+        authors = []
+
+        [dependencies]
+        lazy_static = "1.2.0"
+        lazycell = "1.2.1"
+    "#).unwrap();
+
+    File::create(&lock).unwrap().write_all(br#"
+[[package]]
+name = "foo"
+version = "0.1.0"
+dependencies = [
+ "lazy_static 1.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "lazycell 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
+name = "lazy_static"
+version = "1.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+
+[[package]]
+name = "lazycell"
+version = "1.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+
+[metadata]
+"checksum lazy_static 1.2.0 (registry+https://github.com/rust-lang/crates.io-index)" = "a374c89b9db55895453a74c1e38861d9deec0b01b405a82516e9d5de4820dea1"
+"checksum lazycell 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)" = "b294d6fa9ee409a054354afc4352b0b9ef7ca222c69b8812cbea9e7d2bf3783f"
+"#).unwrap();
+
+    // Run again -- no delete unused
+    run(cmd().arg(&registry).arg("--no-delete").arg("--sync").arg(&lock));
+
+    assert!(registry.join("language-tags-0.2.2.crate").exists());
+    assert!(registry.join("lazy_static-0.2.11.crate").exists());
+    assert!(registry.join("lazy_static-1.2.0.crate").exists());
+    assert!(registry.join("lazycell-1.2.1.crate").exists());
+
+    contents.clear();
+    File::open(registry.join("index/la/zy/lazy_static")).unwrap()
+        .read_to_string(&mut contents).unwrap();
+    assert_eq!(contents, r#"{"name":"lazy_static","vers":"0.2.11","deps":[{"name":"compiletest_rs","req":"^0.3","features":[],"optional":true,"default_features":true,"target":null,"kind":null},{"name":"spin","req":"^0.4.6","features":[],"optional":true,"default_features":true,"target":null,"kind":null}],"cksum":"76f033c7ad61445c5b347c7382dd1237847eb1bce590fe50365dcb33d546be73","features":{"compiletest":["compiletest_rs"],"nightly":[],"spin_no_std":["nightly","spin"]},"yanked":false}
+{"name":"lazy_static","vers":"1.2.0","deps":[{"name":"spin","req":"^0.4.10","features":["once"],"optional":true,"default_features":false,"target":null,"kind":null}],"cksum":"a374c89b9db55895453a74c1e38861d9deec0b01b405a82516e9d5de4820dea1","features":{"nightly":[],"spin_no_std":["spin"]},"yanked":false}"#);
+
+    contents.clear();
+    File::open(registry.join("index/la/zy/lazycell")).unwrap()
+        .read_to_string(&mut contents).unwrap();
+    assert_eq!(contents, r#"{"name":"lazycell","vers":"1.2.1","deps":[{"name":"clippy","req":"^0.0","features":[],"optional":true,"default_features":true,"target":null,"kind":null}],"cksum":"b294d6fa9ee409a054354afc4352b0b9ef7ca222c69b8812cbea9e7d2bf3783f","features":{"nightly":[],"nightly-testing":["clippy","nightly"]},"yanked":false}"#);
+
+    contents.clear();
+    File::open(registry.join("index/la/ng/language-tags")).unwrap()
+        .read_to_string(&mut contents).unwrap();
+    assert_eq!(contents, r#"{"name":"language-tags","vers":"0.2.2","deps":[{"name":"heapsize","req":">= 0.2.2, < 0.4","features":[],"optional":true,"default_features":true,"target":null,"kind":null},{"name":"heapsize_plugin","req":"^0.1.2","features":[],"optional":true,"default_features":true,"target":null,"kind":null}],"cksum":"a91d884b6667cd606bb5a69aa0c99ba811a115fc68915e7056ec08a46e93199a","features":{"heap_size":["heapsize","heapsize_plugin"]},"yanked":false}"#);
+
+    // Run for the third time -- delete unused (default)
+    run(cmd().arg(&registry).arg("--sync").arg(&lock));
+
+    // should be deleted
+    assert!(!registry.join("language-tags-0.2.2.crate").exists());
+    // should be deleted
+    assert!(!registry.join("lazy_static-0.2.11.crate").exists());
+    assert!(registry.join("lazy_static-1.2.0.crate").exists());
+    assert!(registry.join("lazycell-1.2.1.crate").exists());
+
+    // index and its parent directory should be cleaned, too
+    assert!(!registry.join("index").join("la").join("ng").exists());
+
+    contents.clear();
+    File::open(registry.join("index/la/zy/lazy_static")).unwrap()
+        .read_to_string(&mut contents).unwrap();
+    assert_eq!(contents, r#"{"name":"lazy_static","vers":"1.2.0","deps":[{"name":"spin","req":"^0.4.10","features":["once"],"optional":true,"default_features":false,"target":null,"kind":null}],"cksum":"a374c89b9db55895453a74c1e38861d9deec0b01b405a82516e9d5de4820dea1","features":{"nightly":[],"spin_no_std":["spin"]},"yanked":false}"#);
+
+    contents.clear();
+    File::open(registry.join("index/la/zy/lazycell")).unwrap()
+        .read_to_string(&mut contents).unwrap();
+    assert_eq!(contents, r#"{"name":"lazycell","vers":"1.2.1","deps":[{"name":"clippy","req":"^0.0","features":[],"optional":true,"default_features":true,"target":null,"kind":null}],"cksum":"b294d6fa9ee409a054354afc4352b0b9ef7ca222c69b8812cbea9e7d2bf3783f","features":{"nightly":[],"nightly-testing":["clippy","nightly"]},"yanked":false}"#);
+}
+
 fn run(cmd: &mut Command) -> String {
-    let output = cmd.output().unwrap();
+    let output = cmd.env("RUST_BACKTRACE", "1").output().unwrap();
     if !output.status.success() {
         panic!("failed to run {:?}\n--- stdout\n{}\n--- stderr\n{}", cmd,
                String::from_utf8_lossy(&output.stdout),
