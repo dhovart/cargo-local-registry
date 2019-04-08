@@ -14,7 +14,7 @@ A Cago subcommand for managing local registries.
 
 [dependencies]
 cargo = "0.32"
-docopt = "1.0"
+docopt = "1.1"
 env_logger = "0.6"
 failure = "0.1"
 flate2 = "1.0"
