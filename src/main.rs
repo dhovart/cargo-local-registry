@@ -1,27 +1,18 @@
-extern crate cargo;
-extern crate docopt;
-extern crate env_logger;
-extern crate failure;
-extern crate flate2;
-extern crate tar;
-#[macro_use]
-extern crate serde_derive;
-extern crate serde_json;
-
+use cargo::core::dependency::{Kind, Platform};
+use cargo::core::resolver::Resolve;
+use cargo::core::{Package, SourceId, Workspace};
+use cargo::sources::PathSource;
+use cargo::util::errors::*;
+use cargo::util::{Config, ToUrl};
+use docopt::Docopt;
+use flate2::write::GzEncoder;
+use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashSet};
 use std::env;
 use std::fs::{self, File};
-use std::io::prelude::*;
 use std::io;
+use std::io::prelude::*;
 use std::path::{self, Path, PathBuf};
-
-use cargo::core::{SourceId, Workspace, Package};
-use cargo::core::dependency::{Kind, Platform};
-use cargo::sources::PathSource;
-use cargo::util::{ToUrl, Config};
-use cargo::util::errors::*;
-use docopt::Docopt;
-use flate2::write::GzEncoder;
 use tar::{Builder, Header};
 
 #[derive(Deserialize)]
@@ -100,20 +91,21 @@ Options:
 }
 
 fn real_main(options: Options, config: &mut Config) -> CargoResult<()> {
-    try!(config.configure(options.flag_verbose,
-                          options.flag_quiet,
-                          &options.flag_color,
-                          /* frozen = */ false,
-                          /* locked = */ false,
-                          /* target dir = */ &None,
-                          /* unstable flags = */ &[]));
+    config.configure(
+        options.flag_verbose,
+        options.flag_quiet,
+        &options.flag_color,
+        /* frozen = */ false,
+        /* locked = */ false,
+        /* target dir = */ &None,
+        /* unstable flags = */ &[],
+    )?;
 
     let path = Path::new(&options.arg_path);
     let index = path.join("index");
 
-    try!(fs::create_dir_all(&index).chain_err(|| {
-        format!("failed to create index: `{}`", index.display())
-    }));
+    fs::create_dir_all(&index)
+        .chain_err(|| format!("failed to create index: `{}`", index.display()))?;
     let id = match options.flag_host {
         Some(ref s) => SourceId::for_registry(&s.to_url()?)?,
         None => SourceId::crates_io(config)?,
@@ -124,11 +116,10 @@ fn real_main(options: Options, config: &mut Config) -> CargoResult<()> {
         None => return Ok(()),
     };
 
-    sync(Path::new(lockfile), &path, &id, &options, config).chain_err(|| {
-        "failed to sync"
-    })?;
+    sync(Path::new(lockfile), &path, &id, &options, config).chain_err(|| "failed to sync")?;
 
-    println!("add this to your .cargo/config somewhere:
+    println!(
+        "add this to your .cargo/config somewhere:
 
     [source.crates-io]
     registry = '{}'
@@ -137,24 +128,28 @@ fn real_main(options: Options, config: &mut Config) -> CargoResult<()> {
     [source.local-registry]
     local-registry = '{}'
 
-", id.url(), config.cwd().join(path).display());
+",
+        id.url(),
+        config.cwd().join(path).display()
+    );
 
     Ok(())
 }
 
-fn sync(lockfile: &Path,
-        local_dst: &Path,
-        registry_id: &SourceId,
-        options: &Options,
-        config: &Config) -> CargoResult<()> {
+fn sync(
+    lockfile: &Path,
+    local_dst: &Path,
+    registry_id: &SourceId,
+    options: &Options,
+    config: &Config,
+) -> CargoResult<()> {
     let no_delete = options.flag_no_delete.unwrap_or(false);
     let canonical_local_dst = local_dst.canonicalize().unwrap_or(local_dst.to_path_buf());
     let manifest = lockfile.parent().unwrap().join("Cargo.toml");
     let manifest = env::current_dir().unwrap().join(&manifest);
     let ws = Workspace::new(&manifest, config)?;
-    let (packages, resolve) = cargo::ops::resolve_ws(&ws).chain_err(|| {
-        "failed to load pkg lockfile"
-    })?;
+    let (packages, resolve) =
+        cargo::ops::resolve_ws(&ws).chain_err(|| "failed to load pkg lockfile")?;
     packages.get_many(resolve.iter())?;
     let hash = cargo::util::hex::short_hash(registry_id);
     let ident = registry_id.url().host().unwrap().to_string();
@@ -167,20 +162,21 @@ fn sync(lockfile: &Path,
     for id in resolve.iter() {
         if id.source_id().is_git() {
             if !options.flag_git {
-                continue
+                continue;
             }
         } else if !id.source_id().is_registry() {
-            continue
+            continue;
         }
 
-        let pkg = packages.get_one(&id).chain_err(|| "failed to fetch package")?;
+        let pkg = packages
+            .get_one(id)
+            .chain_err(|| "failed to fetch package")?;
         let filename = format!("{}-{}.crate", id.name(), id.version());
         let dst = canonical_local_dst.join(&filename);
         if id.source_id().is_registry() {
             let src = cache.join(&filename).into_path_unlocked();
             fs::copy(&src, &dst).chain_err(|| {
-                format!("failed to copy `{}` to `{}`", src.display(),
-                        dst.display())
+                format!("failed to copy `{}` to `{}`", src.display(), dst.display())
             })?;
         } else {
             let file = File::create(&dst).unwrap();
@@ -200,7 +196,7 @@ fn sync(lockfile: &Path,
             _ => index_dir.join(&name[..2]).join(&name[2..4]).join(name),
         };
         fs::create_dir_all(&dst.parent().unwrap())?;
-        let line = serde_json::to_string(&registry_pkg(&pkg)).unwrap();
+        let line = serde_json::to_string(&registry_pkg(&pkg, &resolve)).unwrap();
 
         let prev = if no_delete || added_index.contains(&dst) {
             read(&dst).unwrap_or(String::new())
@@ -209,28 +205,34 @@ fn sync(lockfile: &Path,
             // it in one of the previous iterations.
             String::new()
         };
-        let mut prev_entries = prev.lines().filter(|line| {
-            let pkg: RegistryPackage = serde_json::from_str(line).unwrap();
-            pkg.vers != id.version().to_string()
-        }).collect::<Vec<_>>();
+        let mut prev_entries = prev
+            .lines()
+            .filter(|line| {
+                let pkg: RegistryPackage = serde_json::from_str(line).unwrap();
+                pkg.vers != id.version().to_string()
+            })
+            .collect::<Vec<_>>();
         prev_entries.push(&line);
         prev_entries.sort();
         let new_contents = prev_entries.join("\n");
 
-        File::create(&dst).and_then(|mut f| {
-            f.write_all(new_contents.as_bytes())
-        })?;
+        File::create(&dst).and_then(|mut f| f.write_all(new_contents.as_bytes()))?;
         added_index.insert(dst);
     }
 
     if !no_delete {
         let existing_crates: Vec<PathBuf> = canonical_local_dst
             .read_dir()
-            .map(|iter| iter
-                .filter_map(|e| e.ok())
-                .filter(|e| e.file_name().to_str().map_or(false, |name| name.ends_with(".crate")))
-                .map(|e| e.path())
-                .collect::<Vec<_>>())
+            .map(|iter| {
+                iter.filter_map(|e| e.ok())
+                    .filter(|e| {
+                        e.file_name()
+                            .to_str()
+                            .map_or(false, |name| name.ends_with(".crate"))
+                    })
+                    .map(|e| e.path())
+                    .collect::<Vec<_>>()
+            })
             .unwrap_or_else(|_| Vec::new());
 
         for path in existing_crates {
@@ -263,19 +265,20 @@ fn scan_delete(path: &Path, depth: usize, keep: &HashSet<PathBuf>) -> CargoResul
     Ok(())
 }
 
-fn build_ar(ar: &mut Builder<GzEncoder<File>>,
-            pkg: &Package,
-            config: &Config) {
+fn build_ar(ar: &mut Builder<GzEncoder<File>>, pkg: &Package, config: &Config) {
     let root = pkg.root();
-    let src = PathSource::new(pkg.root(),
-                              pkg.package_id().source_id(),
-                              config);
+    let src = PathSource::new(pkg.root(), pkg.package_id().source_id(), config);
     for file in src.list_files(pkg).unwrap().iter() {
-        let relative = cargo::util::without_prefix(&file, &root).unwrap();
+        let relative = file.strip_prefix(&root).unwrap();
         let relative = relative.to_str().unwrap();
         let mut file = File::open(file).unwrap();
-        let path = format!("{}-{}{}{}", pkg.name(), pkg.version(),
-                           path::MAIN_SEPARATOR, relative);
+        let path = format!(
+            "{}-{}{}{}",
+            pkg.name(),
+            pkg.version(),
+            path::MAIN_SEPARATOR,
+            relative
+        );
 
         let mut header = Header::new_ustar();
         let metadata = file.metadata().unwrap();
@@ -287,48 +290,55 @@ fn build_ar(ar: &mut Builder<GzEncoder<File>>,
     }
 }
 
-fn registry_pkg(pkg: &Package) -> RegistryPackage {
+fn registry_pkg(pkg: &Package, resolve: &Resolve) -> RegistryPackage {
     let id = pkg.package_id();
-    let mut deps = pkg.dependencies().iter().map(|dep| {
-        RegistryDependency {
+    let mut deps = pkg
+        .dependencies()
+        .iter()
+        .map(|dep| RegistryDependency {
             name: dep.package_name().to_string(),
             req: dep.version_req().to_string(),
             features: dep.features().iter().map(|s| s.to_string()).collect(),
             optional: dep.is_optional(),
             default_features: dep.uses_default_features(),
-            target: dep.platform().map(|platform| {
-                match *platform {
-                    Platform::Name(ref s) => s.to_string(),
-                    Platform::Cfg(ref s) => format!("cfg({})", s),
-                }
+            target: dep.platform().map(|platform| match *platform {
+                Platform::Name(ref s) => s.to_string(),
+                Platform::Cfg(ref s) => format!("cfg({})", s),
             }),
             kind: match dep.kind() {
                 Kind::Normal => None,
                 Kind::Development => Some("dev".to_string()),
                 Kind::Build => Some("build".to_string()),
             },
-        }
-    }).collect::<Vec<_>>();
+        })
+        .collect::<Vec<_>>();
     deps.sort();
 
-    let features = pkg.summary()
-                      .features()
-                      .into_iter()
-                      .map(|(k, v)| {
-                          let mut v = v.iter()
-                              .map(|x| x.to_string(pkg.summary()))
-                              .collect::<Vec<_>>();
-                          v.sort();
-                          (k.to_string(), v)
-                      })
-                      .collect();
+    let features = pkg
+        .summary()
+        .features()
+        .into_iter()
+        .map(|(k, v)| {
+            let mut v = v
+                .iter()
+                .map(|x| x.to_string(pkg.summary()))
+                .collect::<Vec<_>>();
+            v.sort();
+            (k.to_string(), v)
+        })
+        .collect();
 
     RegistryPackage {
         name: id.name().to_string(),
         vers: id.version().to_string(),
         deps: deps,
         features: features,
-        cksum: pkg.summary().checksum().map(|s| s.to_string()).unwrap_or_default(),
+        cksum: resolve
+            .checksums()
+            .get(&id)
+            .cloned()
+            .unwrap_or_default()
+            .unwrap_or_default(),
         yanked: Some(false),
     }
 }
@@ -339,8 +349,7 @@ fn read(path: &Path) -> CargoResult<String> {
         let mut f = File::open(path)?;
         f.read_to_string(&mut contents)?;
         Ok(contents)
-    })().chain_err(|| {
-        format!("failed to read: {}", path.display())
-    })?;
+    })()
+    .chain_err(|| format!("failed to read: {}", path.display()))?;
     Ok(s)
 }
