@@ -21,7 +21,7 @@ failure = "0.1.0"
 flate2 = "1.0.0"
 serde = { version = "1.0.91", features = ['derive'] }
 serde_json = "1.0.0"
-tar = "0.4.24"
+tar = "0.4.25"
 openssl = { version = '0.10.22', optional = true }
 
 [dev-dependencies]
