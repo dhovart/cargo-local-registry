@@ -18,8 +18,8 @@ use tar::{Builder, Header};
 #[derive(Deserialize)]
 struct Options {
     arg_path: String,
-    flag_no_delete: Option<bool>,
-    flag_sync: Option<String>,
+    flag_no_delete: bool,
+    flag_sync: Vec<String>,
     flag_host: Option<String>,
     flag_verbose: u32,
     flag_quiet: Option<bool>,
@@ -68,7 +68,7 @@ fn main() {
 Vendor all dependencies for a project locally
 
 Usage:
-    cargo local-registry [options] [<path>]
+    cargo local-registry [options] [--sync=<LOCK>]... [<path>]
 
 Options:
     -h, --help               Print this message
@@ -111,12 +111,30 @@ fn real_main(options: Options, config: &mut Config) -> CargoResult<()> {
         None => SourceId::crates_io(config)?,
     };
 
-    let lockfile = match options.flag_sync {
-        Some(ref file) => file,
-        None => return Ok(()),
-    };
+    if options.flag_sync.is_empty() {
+        return Ok(());
+    }
 
-    sync(Path::new(lockfile), &path, &id, &options, config).chain_err(|| "failed to sync")?;
+    let mut added_crates = HashSet::new();
+    let mut added_index = HashSet::new();
+    for lockfile in &options.flag_sync {
+        sync(
+            Path::new(lockfile),
+            &path,
+            &id,
+            &options,
+            config,
+            &mut added_crates,
+            &mut added_index,
+        )
+        .chain_err(|| format!("failed to sync {}", lockfile))?;
+    }
+
+    if !options.flag_no_delete {
+        let canonical_local_dst = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+        delete_unused(&canonical_local_dst, &added_crates)?;
+        scan_delete(&canonical_local_dst.join("index"), 3, &added_index)?;
+    }
 
     println!(
         "add this to your .cargo/config somewhere:
@@ -142,9 +160,13 @@ fn sync(
     registry_id: &SourceId,
     options: &Options,
     config: &Config,
+    added_crates: &mut HashSet<PathBuf>,
+    added_index: &mut HashSet<PathBuf>,
 ) -> CargoResult<()> {
-    let no_delete = options.flag_no_delete.unwrap_or(false);
-    let canonical_local_dst = local_dst.canonicalize().unwrap_or(local_dst.to_path_buf());
+    let no_delete = options.flag_no_delete;
+    let canonical_local_dst = local_dst
+        .canonicalize()
+        .unwrap_or_else(|_| local_dst.to_path_buf());
     let manifest = lockfile.parent().unwrap().join("Cargo.toml");
     let manifest = env::current_dir().unwrap().join(&manifest);
     let ws = Workspace::new(&manifest, config)?;
@@ -157,8 +179,6 @@ fn sync(
 
     let cache = config.registry_cache_path().join(&part);
 
-    let mut added_crates = HashSet::new();
-    let mut added_index = HashSet::new();
     for id in resolve.iter() {
         if id.source_id().is_git() {
             if !options.flag_git {
@@ -220,28 +240,28 @@ fn sync(
         added_index.insert(dst);
     }
 
-    if !no_delete {
-        let existing_crates: Vec<PathBuf> = canonical_local_dst
-            .read_dir()
-            .map(|iter| {
-                iter.filter_map(|e| e.ok())
-                    .filter(|e| {
-                        e.file_name()
-                            .to_str()
-                            .map_or(false, |name| name.ends_with(".crate"))
-                    })
-                    .map(|e| e.path())
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_else(|_| Vec::new());
+    Ok(())
+}
 
-        for path in existing_crates {
-            if !added_crates.contains(&path) {
-                fs::remove_file(&path)?;
-            }
+fn delete_unused(canonical_local_dst: &Path, keep: &HashSet<PathBuf>) -> CargoResult<()> {
+    let existing_crates: Vec<PathBuf> = canonical_local_dst
+        .read_dir()
+        .map(|iter| {
+            iter.filter_map(|e| e.ok())
+                .filter(|e| {
+                    e.file_name()
+                        .to_str()
+                        .map_or(false, |name| name.ends_with(".crate"))
+                })
+                .map(|e| e.path())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_else(|_| Vec::new());
+
+    for path in existing_crates {
+        if !keep.contains(&path) {
+            fs::remove_file(&path)?;
         }
-
-        scan_delete(&canonical_local_dst.join("index"), 3, &added_index)?;
     }
     Ok(())
 }
