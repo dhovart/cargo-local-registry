@@ -193,6 +193,9 @@ fn sync(
             .chain_err(|| "failed to fetch package")?;
         let filename = format!("{}-{}.crate", id.name(), id.version());
         let dst = canonical_local_dst.join(&filename);
+        if added_crates.contains(&dst) {
+            continue;
+        }
         if id.source_id().is_registry() {
             let src = cache.join(&filename).into_path_unlocked();
             fs::copy(&src, &dst).chain_err(|| {
