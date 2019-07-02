@@ -16,7 +16,7 @@ edition = "2018"
 [dependencies]
 cargo = "0.36.0"
 docopt = "1.1.0"
-env_logger = "0.6.0"
+env_logger = "0.6.2"
 failure = "0.1.0"
 flate2 = "1.0.9"
 serde = { version = "1.0.93", features = ['derive'] }
