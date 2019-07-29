@@ -46,6 +46,7 @@ struct RegistryDependency {
     default_features: bool,
     target: Option<String>,
     kind: Option<String>,
+    package: Option<String>
 }
 
 fn main() {
@@ -295,21 +296,29 @@ fn registry_pkg(pkg: &Package, resolve: &Resolve) -> RegistryPackage {
     let mut deps = pkg
         .dependencies()
         .iter()
-        .map(|dep| RegistryDependency {
-            name: dep.package_name().to_string(),
-            req: dep.version_req().to_string(),
-            features: dep.features().iter().map(|s| s.to_string()).collect(),
-            optional: dep.is_optional(),
-            default_features: dep.uses_default_features(),
-            target: dep.platform().map(|platform| match *platform {
-                Platform::Name(ref s) => s.to_string(),
-                Platform::Cfg(ref s) => format!("cfg({})", s),
-            }),
-            kind: match dep.kind() {
-                Kind::Normal => None,
-                Kind::Development => Some("dev".to_string()),
-                Kind::Build => Some("build".to_string()),
-            },
+        .map(|dep| {
+            let (name, package) = match &dep.explicit_name_in_toml() {
+                Some(explicit) => (explicit.to_string(), Some(dep.package_name().to_string())),
+                None => (dep.package_name().to_string(), None),
+            };
+
+            RegistryDependency {
+                name,
+                req: dep.version_req().to_string(),
+                features: dep.features().iter().map(|s| s.to_string()).collect(),
+                optional: dep.is_optional(),
+                default_features: dep.uses_default_features(),
+                target: dep.platform().map(|platform| match *platform {
+                    Platform::Name(ref s) => s.to_string(),
+                    Platform::Cfg(ref s) => format!("cfg({})", s),
+                }),
+                kind: match dep.kind() {
+                    Kind::Normal => None,
+                    Kind::Development => Some("dev".to_string()),
+                    Kind::Build => Some("build".to_string()),
+                },
+                package,
+            }
         })
         .collect::<Vec<_>>();
     deps.sort();
