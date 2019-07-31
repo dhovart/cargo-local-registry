@@ -155,7 +155,7 @@ dependencies = [
 
 [[package]]
 name = "cargo-local-registry"
-version = "0.1.6"
+version = "0.2.0"
 dependencies = [
  "cargo 0.36.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "docopt 1.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
