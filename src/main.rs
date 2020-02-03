@@ -1,12 +1,14 @@
-use cargo::core::dependency::{Kind, Platform};
+use cargo::core::dependency::Kind;
 use cargo::core::resolver::Resolve;
 use cargo::core::{Package, SourceId, Workspace};
 use cargo::sources::PathSource;
 use cargo::util::errors::*;
-use cargo::util::{Config, ToUrl};
+use cargo::util::Config;
+use cargo_platform::Platform;
 use docopt::Docopt;
 use flate2::write::GzEncoder;
 use serde::{Deserialize, Serialize};
+use url::Url;
 use std::collections::{BTreeMap, HashSet};
 use std::env;
 use std::fs::{self, File};
@@ -98,6 +100,7 @@ fn real_main(options: Options, config: &mut Config) -> CargoResult<()> {
         &options.flag_color,
         /* frozen = */ false,
         /* locked = */ false,
+        /* offline = */ false,
         /* target dir = */ &None,
         /* unstable flags = */ &[],
     )?;
@@ -108,7 +111,7 @@ fn real_main(options: Options, config: &mut Config) -> CargoResult<()> {
     fs::create_dir_all(&index)
         .chain_err(|| format!("failed to create index: `{}`", index.display()))?;
     let id = match options.flag_host {
-        Some(ref s) => SourceId::for_registry(&s.to_url()?)?,
+        Some(ref s) => SourceId::for_registry(&Url::parse(s)?)?,
         None => SourceId::crates_io(config)?,
     };
 
