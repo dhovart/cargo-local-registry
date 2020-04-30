@@ -501,6 +501,166 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
     assert_eq!(contents, r#"{"name":"lazycell","vers":"1.2.1","deps":[{"name":"clippy","req":"^0.0","features":[],"optional":true,"default_features":true,"target":null,"kind":null,"package":null}],"cksum":"b294d6fa9ee409a054354afc4352b0b9ef7ca222c69b8812cbea9e7d2bf3783f","features":{"nightly":[],"nightly-testing":["clippy","nightly"]},"yanked":false}"#);
 }
 
+// Creates two crates with different dependencies, runs sync to both of
+// them and checks that files for both crates are vendored.
+//
+// Then deletes a dependency from one of the crates and resyncs, and checks that
+// that only the removed dependency is deleted to verify that delete_unused
+// behaves correctly with multiple crates.
+#[test]
+fn multiple_cargo_lock() {
+    let td = TempDir::new().unwrap();
+    let registry = td.path().join("registry");
+    let foo_dir = td.path().join("foo");
+    let foo_lock = foo_dir.join("Cargo.lock");
+    let bar_dir = td.path().join("bar");
+    let bar_lock = bar_dir.join("Cargo.lock");
+
+    fs::create_dir_all(foo_dir.join("src")).unwrap();
+    fs::create_dir_all(bar_dir.join("src")).unwrap();
+    File::create(foo_dir.join("src/lib.rs"))
+        .unwrap()
+        .write_all(b"")
+        .unwrap();
+    File::create(bar_dir.join("src/lib.rs"))
+        .unwrap()
+        .write_all(b"")
+        .unwrap();
+
+    File::create(foo_dir.join("Cargo.toml"))
+        .unwrap()
+        .write_all(
+            br#"
+        [package]
+        name = "foo"
+        version = "0.1.0"
+        authors = []
+
+        [dependencies]
+        libc = "0.2.6"
+    "#,
+        )
+        .unwrap();
+    File::create(&foo_lock)
+        .unwrap()
+        .write_all(
+            br#"
+[[package]]
+name = "foo"
+version = "0.1.0"
+dependencies = [
+ "libc 0.2.7 (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
+name = "libc"
+version = "0.2.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+"#,
+        )
+        .unwrap();
+
+    File::create(bar_dir.join("Cargo.toml"))
+        .unwrap()
+        .write_all(
+            br#"
+[package]
+name = "bar"
+version = "0.1.0"
+authors = []
+
+[dependencies]
+lazy_static = "1.2.0"
+lazycell = "1.2.1"
+"#)
+        .unwrap();
+
+    File::create(&bar_lock).unwrap().write_all(br#"
+[[package]]
+name = "foo"
+version = "0.1.0"
+dependencies = [
+ "lazy_static 1.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "lazycell 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
+name = "lazy_static"
+version = "1.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+
+[[package]]
+name = "lazycell"
+version = "1.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+
+[metadata]
+"checksum lazy_static 1.2.0 (registry+https://github.com/rust-lang/crates.io-index)" = "a374c89b9db55895453a74c1e38861d9deec0b01b405a82516e9d5de4820dea1"
+"checksum lazycell 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)" = "b294d6fa9ee409a054354afc4352b0b9ef7ca222c69b8812cbea9e7d2bf3783f"
+"#)
+        .unwrap();
+
+    println!(
+        "first run: {}",
+        run(cmd().arg(&registry).arg("--sync").arg(&foo_lock).arg(&"--sync").arg(&bar_lock))
+    );
+
+    assert!(registry.join("index").is_dir());
+    assert!(registry.join("index/li/bc/libc").is_file());
+    assert!(registry.join("libc-0.2.7.crate").is_file());
+    assert!(registry.join("index/la/zy/lazy_static").is_file());
+    assert!(registry.join("index/la/zy/lazycell").is_file());
+    assert!(registry.join("lazy_static-1.2.0.crate").is_file());
+    assert!(registry.join("lazycell-1.2.1.crate").is_file());
+
+    // Remove lazycell from bar
+    File::create(bar_dir.join("Cargo.toml"))
+        .unwrap()
+        .write_all(
+            br#"
+[package]
+name = "bar"
+version = "0.1.0"
+authors = []
+
+[dependencies]
+lazy_static = "1.2.0"
+"#)
+        .unwrap();
+
+    File::create(&bar_lock).unwrap().write_all(br#"
+[[package]]
+name = "foo"
+version = "0.1.0"
+dependencies = [
+ "lazy_static 1.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "lazycell 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
+name = "lazy_static"
+version = "1.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+
+[metadata]
+"checksum lazy_static 1.2.0 (registry+https://github.com/rust-lang/crates.io-index)" = "a374c89b9db55895453a74c1e38861d9deec0b01b405a82516e9d5de4820dea1"
+"#)
+        .unwrap();
+
+    println!(
+        "second run: {}",
+        run(cmd().arg(&registry).arg("--sync").arg(&foo_lock).arg(&"--sync").arg(&bar_lock))
+    );
+
+    assert!(registry.join("index").is_dir());
+    assert!(registry.join("index/li/bc/libc").is_file());
+    assert!(registry.join("libc-0.2.7.crate").is_file());
+    assert!(registry.join("index/la/zy/lazy_static").is_file());
+    assert!(!registry.join("index/la/zy/lazycell").is_file());
+    assert!(registry.join("lazy_static-1.2.0.crate").is_file());
+    assert!(!registry.join("lazycell-1.2.1.crate").is_file());
+}
+
 fn run(cmd: &mut Command) -> String {
     let output = cmd.env("RUST_BACKTRACE", "1").output().unwrap();
     if !output.status.success() {
