@@ -27,6 +27,7 @@ struct Options {
     flag_quiet: Option<bool>,
     flag_color: Option<String>,
     flag_git: bool,
+    flag_use_source_replacement: bool,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -54,11 +55,35 @@ struct RegistryDependency {
 fn main() {
     env_logger::init();
 
-    // We're doing the vendoring operation outselves, so we don't actually want
-    // to respect any of the `source` configuration in Cargo itself. That's
-    // intended for other consumers of Cargo, but we want to go straight to the
-    // source, e.g. crates.io, to fetch crates.
-    let mut config = {
+    let usage = r#"
+Vendor all dependencies for a project locally
+
+Usage:
+    cargo local-registry [options] [<path>]
+
+Options:
+    -h, --help                Print this message
+    -s, --sync LOCK           Sync the registry with LOCK
+    --host HOST               Registry index to sync with
+    --git                     Vendor git dependencies as well
+    -v, --verbose             Use verbose output
+    -q, --quiet               No output printed to stdout
+    --color WHEN              Coloring: auto, always, never
+    --no-delete               Don't delete older crates in the local registry directory
+    --use-source-replacement  By default source replacement is skipped when syncing.
+"#;
+
+    let options : Options = Docopt::new(usage)
+        .and_then(|d| d.deserialize())
+        .unwrap_or_else(|e| e.exit());
+
+    let mut config = if options.flag_use_source_replacement {
+        Config::default().unwrap()
+    } else {
+        // We're doing the vendoring operation outselves, so we don't actually want
+        // to respect any of the `source` configuration in Cargo itself. That's
+        // intended for other consumers of Cargo, but we want to go straight to the
+        // source, e.g. crates.io, to fetch crates.
         let config_orig = Config::default().unwrap();
         let mut values = config_orig.values().unwrap().clone();
         values.remove("source");
@@ -67,26 +92,6 @@ fn main() {
         config
     };
 
-    let usage = r#"
-Vendor all dependencies for a project locally
-
-Usage:
-    cargo local-registry [options] [<path>]
-
-Options:
-    -h, --help               Print this message
-    -s, --sync LOCK          Sync the registry with LOCK
-    --host HOST              Registry index to sync with
-    --git                    Vendor git dependencies as well
-    -v, --verbose            Use verbose output
-    -q, --quiet              No output printed to stdout
-    --color WHEN             Coloring: auto, always, never
-    --no-delete              Don't delete older crates in the local registry directory
-"#;
-
-    let options = Docopt::new(usage)
-        .and_then(|d| d.deserialize())
-        .unwrap_or_else(|e| e.exit());
     let result = real_main(options, &mut config);
     if let Err(e) = result {
         cargo::exit_with_error(e.into(), &mut *config.shell());
