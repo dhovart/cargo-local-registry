@@ -3,12 +3,11 @@ use cargo::core::resolver::Resolve;
 use cargo::core::{Package, SourceId, Workspace};
 use cargo::sources::PathSource;
 use cargo::util::errors::*;
-use cargo::util::Config;
+use cargo::util::{Config, ConfigValue};
 use cargo_platform::Platform;
 use docopt::Docopt;
 use flate2::write::GzEncoder;
 use serde::{Deserialize, Serialize};
-use url::Url;
 use std::collections::{BTreeMap, HashSet};
 use std::env;
 use std::fs::{self, File};
@@ -16,6 +15,7 @@ use std::io;
 use std::io::prelude::*;
 use std::path::{self, Path, PathBuf};
 use tar::{Builder, Header};
+use url::Url;
 
 #[derive(Deserialize)]
 struct Options {
@@ -27,7 +27,6 @@ struct Options {
     flag_quiet: Option<bool>,
     flag_color: Option<String>,
     flag_git: bool,
-    flag_use_source_replacement: bool,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -49,7 +48,7 @@ struct RegistryDependency {
     default_features: bool,
     target: Option<String>,
     kind: Option<String>,
-    package: Option<String>
+    package: Option<String>,
 }
 
 fn main() {
@@ -70,32 +69,43 @@ Options:
     -q, --quiet               No output printed to stdout
     --color WHEN              Coloring: auto, always, never
     --no-delete               Don't delete older crates in the local registry directory
-    --use-source-replacement  By default source replacement is skipped when syncing.
 "#;
 
-    let options : Options = Docopt::new(usage)
+    let options: Options = Docopt::new(usage)
         .and_then(|d| d.deserialize())
         .unwrap_or_else(|e| e.exit());
 
-    let mut config = if options.flag_use_source_replacement {
-        Config::default().unwrap()
-    } else {
-        // We're doing the vendoring operation outselves, so we don't actually want
-        // to respect any of the `source` configuration in Cargo itself. That's
-        // intended for other consumers of Cargo, but we want to go straight to the
-        // source, e.g. crates.io, to fetch crates.
-        let config_orig = Config::default().unwrap();
-        let mut values = config_orig.values().unwrap().clone();
-        values.remove("source");
-        let config = Config::default().unwrap();
-        config.set_values(values).unwrap();
-        config
-    };
+    let mut config = get_cargo_config();
 
     let result = real_main(options, &mut config);
     if let Err(e) = result {
         cargo::exit_with_error(e.into(), &mut *config.shell());
     }
+}
+
+/// We're doing the vendoring operation outselves, so we don't actually want
+/// to respect local `source` configuration in Cargo itself. That's
+/// intended for other consumers of Cargo, but we want to go straight to the
+/// source, e.g. crates.io, to fetch crates.
+fn get_cargo_config() -> Config {
+    let mut config_orig = Config::default().unwrap();
+
+    // Hack: Force the cargo config values to be loaded.
+    // (without this line, values_mut call will fail saying config not loaded yet.)
+    let mut _values = config_orig.values();
+
+    if let Some(ref mut config) = config_orig.values_mut().unwrap().get_mut("source") {
+        if let ConfigValue::Table(ref mut map, _) = config {
+            // Don't retain local sources
+            map.retain(|&_, section| {
+                if let ConfigValue::Table(ref kv, _) = section {
+                    return !(kv.contains_key("local-registry") || kv.contains_key("directory"));
+                }
+                true
+            });
+        }
+    }
+    config_orig
 }
 
 fn real_main(options: Options, config: &mut Config) -> CargoResult<()> {
