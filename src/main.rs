@@ -93,13 +93,22 @@ fn get_cargo_config() -> Config {
     // Hack: Force the cargo config values to be loaded.
     // (without this line, values_mut call will fail saying config not loaded yet.)
     let mut _values = config_orig.values();
-
+    println!("{:#?}", &config_orig);
     if let Some(ref mut config) = config_orig.values_mut().unwrap().get_mut("source") {
         if let ConfigValue::Table(ref mut map, _) = config {
             // Don't retain local sources
             map.retain(|&_, section| {
                 if let ConfigValue::Table(ref kv, _) = section {
-                    return !(kv.contains_key("local-registry") || kv.contains_key("directory"));
+                    if kv.keys().count() != 1 {
+                        panic!("Exactly one source replacement destination should be specified.")
+                    }
+                    return match kv.keys().next().unwrap().as_str() {
+                        "local-regsitry" | "directory" => false,
+                        "replace-with" | "git" | "registry" => true,
+                        _ => panic!(
+                            "unknown source replacement type - this is a bug - please report."
+                        ),
+                    };
                 }
                 true
             });
