@@ -10,20 +10,21 @@ homepage = "https://github.com/ChrisGreenaway/cargo-local-registry"
 description = """
 A Cargo subcommand for managing local registries.
 """
-edition = "2018"
+edition = "2021"
 
 [dependencies]
-cargo = "0.42.0"
+cargo = "0.57.0"
 docopt = "1.1.0"
 env_logger = "0.7.0"
 failure = "0.1.0"
-flate2 = "1.0.9"
+flate2 = "1.0.22"
 serde = { version = "1.0.104", features = ['derive'] }
 serde_json = "1.0.46"
 tar = "0.4.26"
 openssl = { version = '0.10.24', optional = true }
 cargo-platform = "0.1.0"
 url = "2.1.1"
+anyhow = "1.0.47"
 
 [dev-dependencies]
 tempfile = "3.1.0"
