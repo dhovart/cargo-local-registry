@@ -1,8 +1,9 @@
-use cargo::core::dependency::Kind;
+use cargo::core::dependency::DepKind;
 use cargo::core::resolver::Resolve;
 use cargo::core::{Package, SourceId, Workspace};
 use cargo::sources::PathSource;
 use cargo::util::errors::*;
+use anyhow::{Context as _};
 use cargo::util::Config;
 use cargo_platform::Platform;
 use docopt::Docopt;
@@ -24,7 +25,7 @@ struct Options {
     flag_sync: Option<String>,
     flag_host: Option<String>,
     flag_verbose: u32,
-    flag_quiet: Option<bool>,
+    flag_quiet: bool,
     flag_color: Option<String>,
     flag_git: bool,
 }
@@ -97,19 +98,20 @@ fn real_main(options: Options, config: &mut Config) -> CargoResult<()> {
     config.configure(
         options.flag_verbose,
         options.flag_quiet,
-        &options.flag_color,
+        options.flag_color.as_deref(),
         /* frozen = */ false,
         /* locked = */ false,
         /* offline = */ false,
         /* target dir = */ &None,
         /* unstable flags = */ &[],
+        /* cli_config = */ &[]
     )?;
 
     let path = Path::new(&options.arg_path);
     let index = path.join("index");
 
     fs::create_dir_all(&index)
-        .chain_err(|| format!("failed to create index: `{}`", index.display()))?;
+        .with_context(|| format!("failed to create index: `{}`", index.display()))?;
     let id = match options.flag_host {
         Some(ref s) => SourceId::for_registry(&Url::parse(s)?)?,
         None => SourceId::crates_io(config)?,
@@ -120,7 +122,7 @@ fn real_main(options: Options, config: &mut Config) -> CargoResult<()> {
         None => return Ok(()),
     };
 
-    sync(Path::new(lockfile), &path, &id, &options, config).chain_err(|| "failed to sync")?;
+    sync(Path::new(lockfile), &path, &id, &options, config).with_context(|| "failed to sync")?;
 
     println!(
         "add this to your .cargo/config somewhere:
@@ -153,8 +155,9 @@ fn sync(
     let manifest = env::current_dir().unwrap().join(&manifest);
     let ws = Workspace::new(&manifest, config)?;
     let (packages, resolve) =
-        cargo::ops::resolve_ws(&ws).chain_err(|| "failed to load pkg lockfile")?;
+        cargo::ops::resolve_ws(&ws).with_context(|| "failed to load pkg lockfile")?;
     packages.get_many(resolve.iter())?;
+
     let hash = cargo::util::hex::short_hash(registry_id);
     let ident = registry_id.url().host().unwrap().to_string();
     let part = format!("{}-{}", ident, hash);
@@ -174,12 +177,12 @@ fn sync(
 
         let pkg = packages
             .get_one(id)
-            .chain_err(|| "failed to fetch package")?;
+            .with_context(|| "failed to fetch package")?;
         let filename = format!("{}-{}.crate", id.name(), id.version());
         let dst = canonical_local_dst.join(&filename);
         if id.source_id().is_registry() {
             let src = cache.join(&filename).into_path_unlocked();
-            fs::copy(&src, &dst).chain_err(|| {
+            fs::copy(&src, &dst).with_context(|| {
                 format!("failed to copy `{}` to `{}`", src.display(), dst.display())
             })?;
         } else {
@@ -316,9 +319,9 @@ fn registry_pkg(pkg: &Package, resolve: &Resolve) -> RegistryPackage {
                     Platform::Cfg(ref s) => format!("cfg({})", s),
                 }),
                 kind: match dep.kind() {
-                    Kind::Normal => None,
-                    Kind::Development => Some("dev".to_string()),
-                    Kind::Build => Some("build".to_string()),
+                    DepKind::Normal => None,
+                    DepKind::Development => Some("dev".to_string()),
+                    DepKind::Build => Some("build".to_string()),
                 },
                 package,
             }
@@ -333,7 +336,7 @@ fn registry_pkg(pkg: &Package, resolve: &Resolve) -> RegistryPackage {
         .map(|(k, v)| {
             let mut v = v
                 .iter()
-                .map(|x| x.to_string(pkg.summary()))
+                .map(|x| x.to_string())
                 .collect::<Vec<_>>();
             v.sort();
             (k.to_string(), v)
@@ -362,6 +365,6 @@ fn read(path: &Path) -> CargoResult<String> {
         f.read_to_string(&mut contents)?;
         Ok(contents)
     })()
-    .chain_err(|| format!("failed to read: {}", path.display()))?;
+    .with_context(|| format!("failed to read: {}", path.display()))?;
     Ok(s)
 }
