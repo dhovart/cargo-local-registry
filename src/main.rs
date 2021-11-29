@@ -1,15 +1,14 @@
+use anyhow::Context as _;
 use cargo::core::dependency::DepKind;
 use cargo::core::resolver::Resolve;
-use cargo::core::{Package, SourceId, Workspace};
+use cargo::core::{FeatureValue, Package, SourceId, Workspace};
 use cargo::sources::PathSource;
 use cargo::util::errors::*;
-use anyhow::{Context as _};
 use cargo::util::Config;
 use cargo_platform::Platform;
 use docopt::Docopt;
 use flate2::write::GzEncoder;
 use serde::{Deserialize, Serialize};
-use url::Url;
 use std::collections::{BTreeMap, HashSet};
 use std::env;
 use std::fs::{self, File};
@@ -17,6 +16,7 @@ use std::io;
 use std::io::prelude::*;
 use std::path::{self, Path, PathBuf};
 use tar::{Builder, Header};
+use url::Url;
 
 #[derive(Deserialize)]
 struct Options {
@@ -49,7 +49,7 @@ struct RegistryDependency {
     default_features: bool,
     target: Option<String>,
     kind: Option<String>,
-    package: Option<String>
+    package: Option<String>,
 }
 
 fn main() {
@@ -104,7 +104,7 @@ fn real_main(options: Options, config: &mut Config) -> CargoResult<()> {
         /* offline = */ false,
         /* target dir = */ &None,
         /* unstable flags = */ &[],
-        /* cli_config = */ &[]
+        /* cli_config = */ &[],
     )?;
 
     let path = Path::new(&options.arg_path);
@@ -203,7 +203,7 @@ fn sync(
             _ => index_dir.join(&name[..2]).join(&name[2..4]).join(name),
         };
         fs::create_dir_all(&dst.parent().unwrap())?;
-        let line = serde_json::to_string(&registry_pkg(&pkg, &resolve)).unwrap();
+        let line = serde_json::to_string(&registry_pkg(&pkg, &resolve, &config)).unwrap();
 
         let prev = if no_delete || added_index.contains(&dst) {
             read(&dst).unwrap_or(String::new())
@@ -297,7 +297,7 @@ fn build_ar(ar: &mut Builder<GzEncoder<File>>, pkg: &Package, config: &Config) {
     }
 }
 
-fn registry_pkg(pkg: &Package, resolve: &Resolve) -> RegistryPackage {
+fn registry_pkg(pkg: &Package, resolve: &Resolve, config: &Config) -> RegistryPackage {
     let id = pkg.package_id();
     let mut deps = pkg
         .dependencies()
@@ -329,17 +329,38 @@ fn registry_pkg(pkg: &Package, resolve: &Resolve) -> RegistryPackage {
         .collect::<Vec<_>>();
     deps.sort();
 
+    let allow_namespaced_features =
+        config.nightly_features_allowed && config.cli_unstable().namespaced_features;
     let features = pkg
         .summary()
         .features()
         .into_iter()
-        .map(|(k, v)| {
+        .filter_map(|(k, v)| {
+            if !allow_namespaced_features
+                && !v.is_empty()
+                && v.iter().all(|fv| {
+                    if let FeatureValue::Dep { .. } = fv {
+                        true
+                    } else {
+                        false
+                    }
+                })
+            {
+                return None;
+            }
             let mut v = v
                 .iter()
-                .map(|x| x.to_string())
+                .filter_map(|fv| {
+                    if !allow_namespaced_features {
+                        if let FeatureValue::Dep { .. } = fv {
+                            return None;
+                        }
+                    }
+                    Some(fv.to_string())
+                })
                 .collect::<Vec<_>>();
             v.sort();
-            (k.to_string(), v)
+            Some((k.to_string(), v))
         })
         .collect();
 
