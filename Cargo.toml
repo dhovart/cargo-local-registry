@@ -1,12 +1,12 @@
 [package]
 name = "cargo-local-registry"
-version = "0.2.1"
+version = "0.2.2"
 authors = ["Alex Crichton <alex@alexcrichton.com>"]
 license = "MIT/Apache-2.0"
 readme = "README.md"
 keywords = ["cargo-subcommand"]
-repository = "https://github.com/ChrisGreenaway/cargo-local-registry"
-homepage = "https://github.com/ChrisGreenaway/cargo-local-registry"
+repository = "https://github.com/dhovart/cargo-local-registry"
+homepage = "https://github.com/dhovart/cargo-local-registry"
 description = """
 A Cargo subcommand for managing local registries.
 """
