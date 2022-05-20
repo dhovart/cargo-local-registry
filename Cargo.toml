@@ -13,7 +13,7 @@ A Cargo subcommand for managing local registries.
 edition = "2021"
 
 [dependencies]
-cargo = "0.57.0"
+cargo = "0.62.0"
 docopt = "1.1.0"
 env_logger = "0.7.0"
 failure = "0.1.0"
