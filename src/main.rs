@@ -50,6 +50,7 @@ struct RegistryDependency {
     target: Option<String>,
     kind: Option<String>,
     package: Option<String>,
+    registry: Option<String>,
 }
 
 fn main() {
@@ -122,7 +123,7 @@ fn real_main(options: Options, config: &mut Config) -> CargoResult<()> {
         None => return Ok(()),
     };
 
-    sync(Path::new(lockfile), &path, &id, &options, config).with_context(|| "failed to sync")?;
+    sync(Path::new(lockfile), &path, &options, config).with_context(|| "failed to sync")?;
 
     println!(
         "add this to your .cargo/config somewhere:
@@ -145,7 +146,6 @@ fn real_main(options: Options, config: &mut Config) -> CargoResult<()> {
 fn sync(
     lockfile: &Path,
     local_dst: &Path,
-    registry_id: &SourceId,
     options: &Options,
     config: &Config,
 ) -> CargoResult<()> {
@@ -158,12 +158,6 @@ fn sync(
         cargo::ops::resolve_ws(&ws).with_context(|| "failed to load pkg lockfile")?;
     packages.get_many(resolve.iter())?;
 
-    let hash = cargo::util::hex::short_hash(registry_id);
-    let ident = registry_id.url().host().unwrap().to_string();
-    let part = format!("{}-{}", ident, hash);
-
-    let cache = config.registry_cache_path().join(&part);
-
     let mut added_crates = HashSet::new();
     let mut added_index = HashSet::new();
     for id in resolve.iter() {
@@ -174,6 +168,12 @@ fn sync(
         } else if !id.source_id().is_registry() {
             continue;
         }
+        let registry_id = id.source_id();
+        let hash = cargo::util::hex::short_hash(&registry_id);
+        let ident = registry_id.url().host().unwrap().to_string();
+        let part = format!("{}-{}", ident, hash);
+
+        let cache = config.registry_cache_path().join(&part);
 
         let pkg = packages
             .get_one(id)
@@ -299,6 +299,8 @@ fn build_ar(ar: &mut Builder<GzEncoder<File>>, pkg: &Package, config: &Config) {
 
 fn registry_pkg(pkg: &Package, resolve: &Resolve, config: &Config) -> RegistryPackage {
     let id = pkg.package_id();
+    let source_id = id.source_id();
+    let pkg_url = source_id.url();
     let mut deps = pkg
         .dependencies()
         .iter()
@@ -307,6 +309,8 @@ fn registry_pkg(pkg: &Package, resolve: &Resolve, config: &Config) -> RegistryPa
                 Some(explicit) => (explicit.to_string(), Some(dep.package_name().to_string())),
                 None => (dep.package_name().to_string(), None),
             };
+            let dep_source = dep.source_id();
+            let dep_url = dep_source.url();
 
             RegistryDependency {
                 name,
@@ -324,6 +328,7 @@ fn registry_pkg(pkg: &Package, resolve: &Resolve, config: &Config) -> RegistryPa
                     DepKind::Build => Some("build".to_string()),
                 },
                 package,
+                registry: (dep_url != pkg_url).then(|| dep_url.to_string()),
             }
         })
         .collect::<Vec<_>>();
