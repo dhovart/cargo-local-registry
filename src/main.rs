@@ -6,6 +6,7 @@ use cargo::sources::PathSource;
 use cargo::util::errors::*;
 use cargo::util::Config;
 use cargo_platform::Platform;
+use cargo_util::Sha256;
 use docopt::Docopt;
 use flate2::write::GzEncoder;
 use serde::{Deserialize, Serialize};
@@ -154,6 +155,13 @@ fn sync(
     let manifest = lockfile.parent().unwrap().join("Cargo.toml");
     let manifest = env::current_dir().unwrap().join(&manifest);
     let ws = Workspace::new(&manifest, config)?;
+
+    if options.flag_git {
+        // Remove any checksums for git dependencies in Cargo.lock
+        // by regenerating lockfile after removing source replacement
+        cargo::ops::generate_lockfile(&ws).unwrap();
+    }
+
     let (packages, resolve) =
         cargo::ops::resolve_ws(&ws).with_context(|| "failed to load pkg lockfile")?;
     packages.get_many(resolve.iter())?;
@@ -192,7 +200,8 @@ fn sync(
             ar.mode(tar::HeaderMode::Deterministic);
             build_ar(&mut ar, &pkg, config);
         }
-        added_crates.insert(dst);
+        added_crates.insert(dst.clone());
+        let crate_dst = dst;
 
         let name = id.name().to_lowercase();
         let index_dir = canonical_local_dst.join("index");
@@ -203,7 +212,7 @@ fn sync(
             _ => index_dir.join(&name[..2]).join(&name[2..4]).join(name),
         };
         fs::create_dir_all(&dst.parent().unwrap())?;
-        let line = serde_json::to_string(&registry_pkg(&pkg, &resolve)).unwrap();
+        let line = serde_json::to_string(&registry_pkg(&pkg, &resolve, &crate_dst)).unwrap();
 
         let prev = if no_delete || added_index.contains(&dst) {
             read(&dst).unwrap_or(String::new())
@@ -297,7 +306,7 @@ fn build_ar(ar: &mut Builder<GzEncoder<File>>, pkg: &Package, config: &Config) {
     }
 }
 
-fn registry_pkg(pkg: &Package, resolve: &Resolve) -> RegistryPackage {
+fn registry_pkg(pkg: &Package, resolve: &Resolve, crate_file: &Path) -> RegistryPackage {
     let id = pkg.package_id();
     let source_id = id.source_id();
     let pkg_url = source_id.url();
@@ -358,7 +367,13 @@ fn registry_pkg(pkg: &Package, resolve: &Resolve) -> RegistryPackage {
             .get(&id)
             .cloned()
             .unwrap_or_default()
-            .unwrap_or_default(),
+            .unwrap_or_else(|| {
+                // Manually add checksum as this is required for (local) registry dependencies
+                // but not normally present for git dependencies
+                let mut hasher = Sha256::new();
+                hasher.update_path(crate_file).unwrap();
+                hasher.finish_hex()
+            }),
         yanked: Some(false),
     }
 }

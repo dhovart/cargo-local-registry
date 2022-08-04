@@ -159,7 +159,7 @@ fn git_dependency() {
         authors = []
 
         [dependencies]
-        libc = { git = "https://github.com/rust-lang/libc" }
+        libc = { git = "https://github.com/rust-lang/libc", tag = "0.2.16" }
     "#).unwrap();
     File::create(&td.path().join("src/lib.rs")).unwrap().write_all(b"").unwrap();
     File::create(&lock).unwrap().write_all(br#"
@@ -500,6 +500,78 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
         .read_to_string(&mut contents).unwrap();
     assert_eq!(contents, r#"{"name":"lazycell","vers":"1.2.1","deps":[{"name":"clippy","req":"^0.0","features":[],"optional":true,"default_features":true,"target":null,"kind":null,"package":null,"registry":null}],"cksum":"b294d6fa9ee409a054354afc4352b0b9ef7ca222c69b8812cbea9e7d2bf3783f","features":{"clippy":["dep:clippy"],"nightly":[],"nightly-testing":["clippy","nightly"]},"yanked":false}"#);
 }
+
+#[test]
+fn cross_registry() {
+    let td = TempDir::new().unwrap();
+    let lock = td.path().join("Cargo.lock");
+    let registry = td.path().join("registry");
+    fs::create_dir(td.path().join("src")).unwrap();
+    File::create(&td.path().join("Cargo.toml")).unwrap().write_all(br#"
+[package]
+name = "foo"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+regex  = { git = "https://github.com/rust-lang/regex", tag = "1.6.0" }
+    "#).unwrap();
+    File::create(&td.path().join("src/lib.rs")).unwrap().write_all(b"").unwrap();
+    File::create(&lock).unwrap().write_all(br#"
+version = 3
+
+[[package]]
+name = "aho-corasick"
+version = "0.7.18"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1e37cfd5e7657ada45f742d6e99ca5788580b5c529dc78faf11ece6dc702656f"
+dependencies = [
+ "memchr",
+]
+
+[[package]]
+name = "foo"
+version = "0.1.0"
+dependencies = [
+ "regex",
+]
+
+[[package]]
+name = "memchr"
+version = "2.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2dffe52ecf27772e601905b7522cb4ef790d2cc203488bbd0e2fe85fcb74566d"
+
+[[package]]
+name = "regex"
+version = "1.6.0"
+source = "git+https://github.com/rust-lang/regex?tag=1.6.0#fc9ee6a249f2d594713c16b1646670924b33334d"
+checksum = "733621849cbe4997782a959408d1575639d540c92151569237b27f6be6411305"
+dependencies = [
+ "aho-corasick",
+ "memchr",
+ "regex-syntax",
+]
+
+[[package]]
+name = "regex-syntax"
+version = "0.6.27"
+source = "git+https://github.com/rust-lang/regex?tag=1.6.0#fc9ee6a249f2d594713c16b1646670924b33334d"
+checksum = "61f56162c4f9c24926e15f9ba0613703161e138709bdfee13f44e3b700695dc5"
+"#).unwrap();
+    run(cmd().arg(&registry).arg("--sync").arg(&lock).arg("--git"));
+
+    let mut contents = String::new();
+    let path = registry.join("index/re/ge/regex");
+    let path = fs::canonicalize(path).unwrap();
+
+    assert_eq!(path.file_name().unwrap(), "regex");
+
+    File::open(registry.join("index/re/ge/regex")).unwrap()
+        .read_to_string(&mut contents).unwrap();
+    assert_eq!(contents, r#"{"name":"regex","vers":"1.6.0","deps":[{"name":"aho-corasick","req":"^0.7.18","features":[],"optional":true,"default_features":true,"target":null,"kind":null,"package":null,"registry":"https://github.com/rust-lang/crates.io-index"},{"name":"lazy_static","req":"^1","features":[],"optional":false,"default_features":true,"target":null,"kind":"dev","package":null,"registry":"https://github.com/rust-lang/crates.io-index"},{"name":"memchr","req":"^2.4.0","features":[],"optional":true,"default_features":true,"target":null,"kind":null,"package":null,"registry":"https://github.com/rust-lang/crates.io-index"},{"name":"quickcheck","req":"^1.0.3","features":[],"optional":false,"default_features":false,"target":null,"kind":"dev","package":null,"registry":"https://github.com/rust-lang/crates.io-index"},{"name":"rand","req":"^0.8.3","features":["getrandom","small_rng"],"optional":false,"default_features":false,"target":null,"kind":"dev","package":null,"registry":"https://github.com/rust-lang/crates.io-index"},{"name":"regex-syntax","req":"^0.6.27","features":[],"optional":false,"default_features":false,"target":null,"kind":null,"package":null,"registry":null}],"cksum":"733621849cbe4997782a959408d1575639d540c92151569237b27f6be6411305","features":{"aho-corasick":["dep:aho-corasick"],"default":["perf","regex-syntax/default","std","unicode"],"memchr":["dep:memchr"],"pattern":[],"perf":["perf-cache","perf-dfa","perf-inline","perf-literal"],"perf-cache":[],"perf-dfa":[],"perf-inline":[],"perf-literal":["aho-corasick","memchr"],"std":[],"unicode":["regex-syntax/unicode","unicode-age","unicode-bool","unicode-case","unicode-gencat","unicode-perl","unicode-script","unicode-segment"],"unicode-age":["regex-syntax/unicode-age"],"unicode-bool":["regex-syntax/unicode-bool"],"unicode-case":["regex-syntax/unicode-case"],"unicode-gencat":["regex-syntax/unicode-gencat"],"unicode-perl":["regex-syntax/unicode-perl"],"unicode-script":["regex-syntax/unicode-script"],"unicode-segment":["regex-syntax/unicode-segment"],"unstable":["pattern"],"use_std":["std"]},"yanked":false}"#);
+}
+
 
 fn run(cmd: &mut Command) -> String {
     let output = cmd.env("RUST_BACKTRACE", "1").output().unwrap();

@@ -173,6 +173,7 @@ dependencies = [
  "anyhow",
  "cargo",
  "cargo-platform",
+ "cargo-util",
  "docopt",
  "env_logger 0.7.1",
  "failure",
