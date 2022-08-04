@@ -1,7 +1,7 @@
 use anyhow::Context as _;
 use cargo::core::dependency::DepKind;
 use cargo::core::resolver::Resolve;
-use cargo::core::{FeatureValue, Package, SourceId, Workspace};
+use cargo::core::{Package, SourceId, Workspace};
 use cargo::sources::PathSource;
 use cargo::util::errors::*;
 use cargo::util::Config;
@@ -203,7 +203,7 @@ fn sync(
             _ => index_dir.join(&name[..2]).join(&name[2..4]).join(name),
         };
         fs::create_dir_all(&dst.parent().unwrap())?;
-        let line = serde_json::to_string(&registry_pkg(&pkg, &resolve, &config)).unwrap();
+        let line = serde_json::to_string(&registry_pkg(&pkg, &resolve)).unwrap();
 
         let prev = if no_delete || added_index.contains(&dst) {
             read(&dst).unwrap_or(String::new())
@@ -297,7 +297,7 @@ fn build_ar(ar: &mut Builder<GzEncoder<File>>, pkg: &Package, config: &Config) {
     }
 }
 
-fn registry_pkg(pkg: &Package, resolve: &Resolve, config: &Config) -> RegistryPackage {
+fn registry_pkg(pkg: &Package, resolve: &Resolve) -> RegistryPackage {
     let id = pkg.package_id();
     let source_id = id.source_id();
     let pkg_url = source_id.url();
@@ -334,35 +334,14 @@ fn registry_pkg(pkg: &Package, resolve: &Resolve, config: &Config) -> RegistryPa
         .collect::<Vec<_>>();
     deps.sort();
 
-    let allow_namespaced_features =
-        config.nightly_features_allowed && config.cli_unstable().namespaced_features;
     let features = pkg
         .summary()
         .features()
         .into_iter()
         .filter_map(|(k, v)| {
-            if !allow_namespaced_features
-                && !v.is_empty()
-                && v.iter().all(|fv| {
-                    if let FeatureValue::Dep { .. } = fv {
-                        true
-                    } else {
-                        false
-                    }
-                })
-            {
-                return None;
-            }
             let mut v = v
                 .iter()
-                .filter_map(|fv| {
-                    if !allow_namespaced_features {
-                        if let FeatureValue::Dep { .. } = fv {
-                            return None;
-                        }
-                    }
-                    Some(fv.to_string())
-                })
+                .filter_map(|fv| Some(fv.to_string()))
                 .collect::<Vec<_>>();
             v.sort();
             Some((k.to_string(), v))
