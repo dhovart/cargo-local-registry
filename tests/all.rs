@@ -4,7 +4,7 @@ use std::env;
 use std::fs::{self, File};
 use std::io::prelude::*;
 use std::process::Command;
-use std::sync::{Once, Mutex, MutexGuard, ONCE_INIT};
+use std::sync::{Once, Mutex, MutexGuard};
 
 use tempfile::TempDir;
 
@@ -20,7 +20,7 @@ fn cmd() -> Command {
     return cmd
 }
 
-static INIT: Once = ONCE_INIT;
+static INIT: Once = Once::new();
 static mut LOCK: *mut Mutex<()> = 0 as *mut _;
 
 fn lock() -> MutexGuard<'static, ()> {
@@ -159,7 +159,7 @@ fn git_dependency() {
         authors = []
 
         [dependencies]
-        libc = { git = "https://github.com/rust-lang/libc" }
+        libc = { git = "https://github.com/rust-lang/libc", tag = "0.2.16" }
     "#).unwrap();
     File::create(&td.path().join("src/lib.rs")).unwrap().write_all(b"").unwrap();
     File::create(&lock).unwrap().write_all(br#"
@@ -240,7 +240,7 @@ dependencies = [
     contents.clear();
     File::open(registry.join("index/fi/le/filetime")).unwrap()
         .read_to_string(&mut contents).unwrap();
-    assert_eq!(contents, r#"{"name":"filetime","vers":"0.1.10","deps":[{"name":"libc","req":"^0.2","features":[],"optional":false,"default_features":true,"target":null,"kind":null,"package":null},{"name":"tempdir","req":"^0.3","features":[],"optional":false,"default_features":true,"target":null,"kind":"dev","package":null}],"cksum":"5363ab8e4139b8568a6237db5248646e5a8a2f89bd5ccb02092182b11fd3e922","features":{},"yanked":false}"#);
+    assert_eq!(contents, r#"{"name":"filetime","vers":"0.1.10","deps":[{"name":"libc","req":"^0.2","features":[],"optional":false,"default_features":true,"target":null,"kind":null,"package":null,"registry":null},{"name":"tempdir","req":"^0.3","features":[],"optional":false,"default_features":true,"target":null,"kind":"dev","package":null,"registry":null}],"cksum":"5363ab8e4139b8568a6237db5248646e5a8a2f89bd5ccb02092182b11fd3e922","features":{},"yanked":false}"#);
 
     File::create(&lock).unwrap().write_all(br#"
 [[package]]
@@ -317,7 +317,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 
     File::open(registry.join("index/in/fl/inflector")).unwrap()
         .read_to_string(&mut contents).unwrap();
-    assert_eq!(contents, r#"{"name":"Inflector","vers":"0.11.3","deps":[{"name":"lazy_static","req":"^1.0.0","features":[],"optional":true,"default_features":true,"target":null,"kind":null,"package":null},{"name":"regex","req":"^1.0","features":[],"optional":true,"default_features":true,"target":null,"kind":null,"package":null}],"cksum":"4467f98bb61f615f8273359bf1c989453dfc1ea4a45ae9298f1dcd0672febe5d","features":{"default":["heavyweight"],"heavyweight":["lazy_static","regex"],"lazy_static":["dep:lazy_static"],"regex":["dep:regex"],"unstable":[]},"yanked":false}"#);
+    assert_eq!(contents, r#"{"name":"Inflector","vers":"0.11.3","deps":[{"name":"lazy_static","req":"^1.0.0","features":[],"optional":true,"default_features":true,"target":null,"kind":null,"package":null,"registry":null},{"name":"regex","req":"^1.0","features":[],"optional":true,"default_features":true,"target":null,"kind":null,"package":null,"registry":null}],"cksum":"4467f98bb61f615f8273359bf1c989453dfc1ea4a45ae9298f1dcd0672febe5d","features":{"default":["heavyweight"],"heavyweight":["lazy_static","regex"],"lazy_static":["dep:lazy_static"],"regex":["dep:regex"],"unstable":[]},"yanked":false}"#);
 }
 
 #[test]
@@ -359,7 +359,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 
     File::open(registry.join("index/ru/st/rustc-demangle")).unwrap()
         .read_to_string(&mut contents).unwrap();
-    assert_eq!(contents, r#"{"name":"rustc-demangle","vers":"0.1.14","deps":[{"name":"compiler_builtins","req":"^0.1.2","features":[],"optional":true,"default_features":true,"target":null,"kind":null,"package":null},{"name":"core","req":"^1.0.0","features":[],"optional":true,"default_features":true,"target":null,"kind":null,"package":"rustc-std-workspace-core"}],"cksum":"ccc78bfd5acd7bf3e89cffcf899e5cb1a52d6fafa8dec2739ad70c9577a57288","features":{"compiler_builtins":["dep:compiler_builtins"],"core":["dep:core"],"rustc-dep-of-std":["compiler_builtins","core"]},"yanked":false}"#);
+    assert_eq!(contents, r#"{"name":"rustc-demangle","vers":"0.1.14","deps":[{"name":"compiler_builtins","req":"^0.1.2","features":[],"optional":true,"default_features":true,"target":null,"kind":null,"package":null,"registry":null},{"name":"core","req":"^1.0.0","features":[],"optional":true,"default_features":true,"target":null,"kind":null,"package":"rustc-std-workspace-core","registry":null}],"cksum":"ccc78bfd5acd7bf3e89cffcf899e5cb1a52d6fafa8dec2739ad70c9577a57288","features":{"compiler_builtins":["dep:compiler_builtins"],"core":["dep:core"],"rustc-dep-of-std":["compiler_builtins","core"]},"yanked":false}"#);
 }
 
 #[test]
@@ -410,12 +410,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
     let mut contents = String::new();
     File::open(registry.join("index/la/zy/lazy_static")).unwrap()
         .read_to_string(&mut contents).unwrap();
-    assert_eq!(contents, r#"{"name":"lazy_static","vers":"0.2.11","deps":[{"name":"compiletest_rs","req":"^0.3","features":[],"optional":true,"default_features":true,"target":null,"kind":null,"package":null},{"name":"spin","req":"^0.4.6","features":[],"optional":true,"default_features":true,"target":null,"kind":null,"package":null}],"cksum":"76f033c7ad61445c5b347c7382dd1237847eb1bce590fe50365dcb33d546be73","features":{"compiletest":["compiletest_rs"],"compiletest_rs":["dep:compiletest_rs"],"nightly":[],"spin":["dep:spin"],"spin_no_std":["nightly","spin"]},"yanked":false}"#);
+    assert_eq!(contents, r#"{"name":"lazy_static","vers":"0.2.11","deps":[{"name":"compiletest_rs","req":"^0.3","features":[],"optional":true,"default_features":true,"target":null,"kind":null,"package":null,"registry":null},{"name":"spin","req":"^0.4.6","features":[],"optional":true,"default_features":true,"target":null,"kind":null,"package":null,"registry":null}],"cksum":"76f033c7ad61445c5b347c7382dd1237847eb1bce590fe50365dcb33d546be73","features":{"compiletest":["compiletest_rs"],"compiletest_rs":["dep:compiletest_rs"],"nightly":[],"spin":["dep:spin"],"spin_no_std":["nightly","spin"]},"yanked":false}"#);
 
     contents.clear();
     File::open(registry.join("index/la/ng/language-tags")).unwrap()
         .read_to_string(&mut contents).unwrap();
-    assert_eq!(contents, r#"{"name":"language-tags","vers":"0.2.2","deps":[{"name":"heapsize","req":">=0.2.2, <0.4","features":[],"optional":true,"default_features":true,"target":null,"kind":null,"package":null},{"name":"heapsize_plugin","req":"^0.1.2","features":[],"optional":true,"default_features":true,"target":null,"kind":null,"package":null}],"cksum":"a91d884b6667cd606bb5a69aa0c99ba811a115fc68915e7056ec08a46e93199a","features":{"heap_size":["heapsize","heapsize_plugin"],"heapsize":["dep:heapsize"],"heapsize_plugin":["dep:heapsize_plugin"]},"yanked":false}"#);
+    assert_eq!(contents, r#"{"name":"language-tags","vers":"0.2.2","deps":[{"name":"heapsize","req":">=0.2.2, <0.4","features":[],"optional":true,"default_features":true,"target":null,"kind":null,"package":null,"registry":null},{"name":"heapsize_plugin","req":"^0.1.2","features":[],"optional":true,"default_features":true,"target":null,"kind":null,"package":null,"registry":null}],"cksum":"a91d884b6667cd606bb5a69aa0c99ba811a115fc68915e7056ec08a46e93199a","features":{"heap_size":["heapsize","heapsize_plugin"],"heapsize":["dep:heapsize"],"heapsize_plugin":["dep:heapsize_plugin"]},"yanked":false}"#);
 
     // Modify the Cargo.toml to swap an existing library, add a new one and delete another
     File::create(&td.path().join("Cargo.toml")).unwrap().write_all(br#"
@@ -464,18 +464,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
     contents.clear();
     File::open(registry.join("index/la/zy/lazy_static")).unwrap()
         .read_to_string(&mut contents).unwrap();
-    assert_eq!(contents, r#"{"name":"lazy_static","vers":"0.2.11","deps":[{"name":"compiletest_rs","req":"^0.3","features":[],"optional":true,"default_features":true,"target":null,"kind":null,"package":null},{"name":"spin","req":"^0.4.6","features":[],"optional":true,"default_features":true,"target":null,"kind":null,"package":null}],"cksum":"76f033c7ad61445c5b347c7382dd1237847eb1bce590fe50365dcb33d546be73","features":{"compiletest":["compiletest_rs"],"compiletest_rs":["dep:compiletest_rs"],"nightly":[],"spin":["dep:spin"],"spin_no_std":["nightly","spin"]},"yanked":false}
-{"name":"lazy_static","vers":"1.2.0","deps":[{"name":"spin","req":"^0.4.10","features":["once"],"optional":true,"default_features":false,"target":null,"kind":null,"package":null}],"cksum":"a374c89b9db55895453a74c1e38861d9deec0b01b405a82516e9d5de4820dea1","features":{"nightly":[],"spin":["dep:spin"],"spin_no_std":["spin"]},"yanked":false}"#);
+    assert_eq!(contents, r#"{"name":"lazy_static","vers":"0.2.11","deps":[{"name":"compiletest_rs","req":"^0.3","features":[],"optional":true,"default_features":true,"target":null,"kind":null,"package":null,"registry":null},{"name":"spin","req":"^0.4.6","features":[],"optional":true,"default_features":true,"target":null,"kind":null,"package":null,"registry":null}],"cksum":"76f033c7ad61445c5b347c7382dd1237847eb1bce590fe50365dcb33d546be73","features":{"compiletest":["compiletest_rs"],"compiletest_rs":["dep:compiletest_rs"],"nightly":[],"spin":["dep:spin"],"spin_no_std":["nightly","spin"]},"yanked":false}
+{"name":"lazy_static","vers":"1.2.0","deps":[{"name":"spin","req":"^0.4.10","features":["once"],"optional":true,"default_features":false,"target":null,"kind":null,"package":null,"registry":null}],"cksum":"a374c89b9db55895453a74c1e38861d9deec0b01b405a82516e9d5de4820dea1","features":{"nightly":[],"spin":["dep:spin"],"spin_no_std":["spin"]},"yanked":false}"#);
         
     contents.clear();
     File::open(registry.join("index/la/zy/lazycell")).unwrap()
         .read_to_string(&mut contents).unwrap();
-    assert_eq!(contents, r#"{"name":"lazycell","vers":"1.2.1","deps":[{"name":"clippy","req":"^0.0","features":[],"optional":true,"default_features":true,"target":null,"kind":null,"package":null}],"cksum":"b294d6fa9ee409a054354afc4352b0b9ef7ca222c69b8812cbea9e7d2bf3783f","features":{"clippy":["dep:clippy"],"nightly":[],"nightly-testing":["clippy","nightly"]},"yanked":false}"#);
+    assert_eq!(contents, r#"{"name":"lazycell","vers":"1.2.1","deps":[{"name":"clippy","req":"^0.0","features":[],"optional":true,"default_features":true,"target":null,"kind":null,"package":null,"registry":null}],"cksum":"b294d6fa9ee409a054354afc4352b0b9ef7ca222c69b8812cbea9e7d2bf3783f","features":{"clippy":["dep:clippy"],"nightly":[],"nightly-testing":["clippy","nightly"]},"yanked":false}"#);
 
     contents.clear();
     File::open(registry.join("index/la/ng/language-tags")).unwrap()
         .read_to_string(&mut contents).unwrap();
-    assert_eq!(contents, r#"{"name":"language-tags","vers":"0.2.2","deps":[{"name":"heapsize","req":">=0.2.2, <0.4","features":[],"optional":true,"default_features":true,"target":null,"kind":null,"package":null},{"name":"heapsize_plugin","req":"^0.1.2","features":[],"optional":true,"default_features":true,"target":null,"kind":null,"package":null}],"cksum":"a91d884b6667cd606bb5a69aa0c99ba811a115fc68915e7056ec08a46e93199a","features":{"heap_size":["heapsize","heapsize_plugin"],"heapsize":["dep:heapsize"],"heapsize_plugin":["dep:heapsize_plugin"]},"yanked":false}"#);
+    assert_eq!(contents, r#"{"name":"language-tags","vers":"0.2.2","deps":[{"name":"heapsize","req":">=0.2.2, <0.4","features":[],"optional":true,"default_features":true,"target":null,"kind":null,"package":null,"registry":null},{"name":"heapsize_plugin","req":"^0.1.2","features":[],"optional":true,"default_features":true,"target":null,"kind":null,"package":null,"registry":null}],"cksum":"a91d884b6667cd606bb5a69aa0c99ba811a115fc68915e7056ec08a46e93199a","features":{"heap_size":["heapsize","heapsize_plugin"],"heapsize":["dep:heapsize"],"heapsize_plugin":["dep:heapsize_plugin"]},"yanked":false}"#);
 
     // Run for the third time -- delete unused (default)
     run(cmd().arg(&registry).arg("--sync").arg(&lock));
@@ -493,13 +493,85 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
     contents.clear();
     File::open(registry.join("index/la/zy/lazy_static")).unwrap()
         .read_to_string(&mut contents).unwrap();
-    assert_eq!(contents, r#"{"name":"lazy_static","vers":"1.2.0","deps":[{"name":"spin","req":"^0.4.10","features":["once"],"optional":true,"default_features":false,"target":null,"kind":null,"package":null}],"cksum":"a374c89b9db55895453a74c1e38861d9deec0b01b405a82516e9d5de4820dea1","features":{"nightly":[],"spin":["dep:spin"],"spin_no_std":["spin"]},"yanked":false}"#);
+    assert_eq!(contents, r#"{"name":"lazy_static","vers":"1.2.0","deps":[{"name":"spin","req":"^0.4.10","features":["once"],"optional":true,"default_features":false,"target":null,"kind":null,"package":null,"registry":null}],"cksum":"a374c89b9db55895453a74c1e38861d9deec0b01b405a82516e9d5de4820dea1","features":{"nightly":[],"spin":["dep:spin"],"spin_no_std":["spin"]},"yanked":false}"#);
 
     contents.clear();
     File::open(registry.join("index/la/zy/lazycell")).unwrap()
         .read_to_string(&mut contents).unwrap();
-    assert_eq!(contents, r#"{"name":"lazycell","vers":"1.2.1","deps":[{"name":"clippy","req":"^0.0","features":[],"optional":true,"default_features":true,"target":null,"kind":null,"package":null}],"cksum":"b294d6fa9ee409a054354afc4352b0b9ef7ca222c69b8812cbea9e7d2bf3783f","features":{"clippy":["dep:clippy"],"nightly":[],"nightly-testing":["clippy","nightly"]},"yanked":false}"#);
+    assert_eq!(contents, r#"{"name":"lazycell","vers":"1.2.1","deps":[{"name":"clippy","req":"^0.0","features":[],"optional":true,"default_features":true,"target":null,"kind":null,"package":null,"registry":null}],"cksum":"b294d6fa9ee409a054354afc4352b0b9ef7ca222c69b8812cbea9e7d2bf3783f","features":{"clippy":["dep:clippy"],"nightly":[],"nightly-testing":["clippy","nightly"]},"yanked":false}"#);
 }
+
+#[test]
+fn cross_registry() {
+    let td = TempDir::new().unwrap();
+    let lock = td.path().join("Cargo.lock");
+    let registry = td.path().join("registry");
+    fs::create_dir(td.path().join("src")).unwrap();
+    File::create(&td.path().join("Cargo.toml")).unwrap().write_all(br#"
+[package]
+name = "foo"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+regex  = { git = "https://github.com/rust-lang/regex", tag = "1.6.0" }
+    "#).unwrap();
+    File::create(&td.path().join("src/lib.rs")).unwrap().write_all(b"").unwrap();
+    File::create(&lock).unwrap().write_all(br#"
+version = 3
+
+[[package]]
+name = "aho-corasick"
+version = "0.7.18"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1e37cfd5e7657ada45f742d6e99ca5788580b5c529dc78faf11ece6dc702656f"
+dependencies = [
+ "memchr",
+]
+
+[[package]]
+name = "foo"
+version = "0.1.0"
+dependencies = [
+ "regex",
+]
+
+[[package]]
+name = "memchr"
+version = "2.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2dffe52ecf27772e601905b7522cb4ef790d2cc203488bbd0e2fe85fcb74566d"
+
+[[package]]
+name = "regex"
+version = "1.6.0"
+source = "git+https://github.com/rust-lang/regex?tag=1.6.0#fc9ee6a249f2d594713c16b1646670924b33334d"
+checksum = "733621849cbe4997782a959408d1575639d540c92151569237b27f6be6411305"
+dependencies = [
+ "aho-corasick",
+ "memchr",
+ "regex-syntax",
+]
+
+[[package]]
+name = "regex-syntax"
+version = "0.6.27"
+source = "git+https://github.com/rust-lang/regex?tag=1.6.0#fc9ee6a249f2d594713c16b1646670924b33334d"
+checksum = "61f56162c4f9c24926e15f9ba0613703161e138709bdfee13f44e3b700695dc5"
+"#).unwrap();
+    run(cmd().arg(&registry).arg("--sync").arg(&lock).arg("--git"));
+
+    let mut contents = String::new();
+    let path = registry.join("index/re/ge/regex");
+    let path = fs::canonicalize(path).unwrap();
+
+    assert_eq!(path.file_name().unwrap(), "regex");
+
+    File::open(registry.join("index/re/ge/regex")).unwrap()
+        .read_to_string(&mut contents).unwrap();
+    assert_eq!(contents, r#"{"name":"regex","vers":"1.6.0","deps":[{"name":"aho-corasick","req":"^0.7.18","features":[],"optional":true,"default_features":true,"target":null,"kind":null,"package":null,"registry":"https://github.com/rust-lang/crates.io-index"},{"name":"lazy_static","req":"^1","features":[],"optional":false,"default_features":true,"target":null,"kind":"dev","package":null,"registry":"https://github.com/rust-lang/crates.io-index"},{"name":"memchr","req":"^2.4.0","features":[],"optional":true,"default_features":true,"target":null,"kind":null,"package":null,"registry":"https://github.com/rust-lang/crates.io-index"},{"name":"quickcheck","req":"^1.0.3","features":[],"optional":false,"default_features":false,"target":null,"kind":"dev","package":null,"registry":"https://github.com/rust-lang/crates.io-index"},{"name":"rand","req":"^0.8.3","features":["getrandom","small_rng"],"optional":false,"default_features":false,"target":null,"kind":"dev","package":null,"registry":"https://github.com/rust-lang/crates.io-index"},{"name":"regex-syntax","req":"^0.6.27","features":[],"optional":false,"default_features":false,"target":null,"kind":null,"package":null,"registry":null}],"cksum":"733621849cbe4997782a959408d1575639d540c92151569237b27f6be6411305","features":{"aho-corasick":["dep:aho-corasick"],"default":["perf","regex-syntax/default","std","unicode"],"memchr":["dep:memchr"],"pattern":[],"perf":["perf-cache","perf-dfa","perf-inline","perf-literal"],"perf-cache":[],"perf-dfa":[],"perf-inline":[],"perf-literal":["aho-corasick","memchr"],"std":[],"unicode":["regex-syntax/unicode","unicode-age","unicode-bool","unicode-case","unicode-gencat","unicode-perl","unicode-script","unicode-segment"],"unicode-age":["regex-syntax/unicode-age"],"unicode-bool":["regex-syntax/unicode-bool"],"unicode-case":["regex-syntax/unicode-case"],"unicode-gencat":["regex-syntax/unicode-gencat"],"unicode-perl":["regex-syntax/unicode-perl"],"unicode-script":["regex-syntax/unicode-script"],"unicode-segment":["regex-syntax/unicode-segment"],"unstable":["pattern"],"use_std":["std"]},"yanked":false}"#);
+}
+
 
 fn run(cmd: &mut Command) -> String {
     let output = cmd.env("RUST_BACKTRACE", "1").output().unwrap();

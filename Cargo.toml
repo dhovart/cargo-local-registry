@@ -14,6 +14,7 @@ edition = "2021"
 
 [dependencies]
 cargo = "0.62.0"
+cargo-util = "0.1.2"
 docopt = "1.1.0"
 env_logger = "0.7.0"
 failure = "0.1.8"

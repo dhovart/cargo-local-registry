@@ -6,6 +6,7 @@ use cargo::sources::PathSource;
 use cargo::util::errors::*;
 use cargo::util::Config;
 use cargo_platform::Platform;
+use cargo_util::Sha256;
 use docopt::Docopt;
 use flate2::write::GzEncoder;
 use serde::{Deserialize, Serialize};
@@ -50,6 +51,7 @@ struct RegistryDependency {
     target: Option<String>,
     kind: Option<String>,
     package: Option<String>,
+    registry: Option<String>,
 }
 
 fn main() {
@@ -122,7 +124,7 @@ fn real_main(options: Options, config: &mut Config) -> CargoResult<()> {
         None => return Ok(()),
     };
 
-    sync(Path::new(lockfile), &path, &id, &options, config).with_context(|| "failed to sync")?;
+    sync(Path::new(lockfile), &path, &options, config).with_context(|| "failed to sync")?;
 
     println!(
         "add this to your .cargo/config somewhere:
@@ -145,7 +147,6 @@ fn real_main(options: Options, config: &mut Config) -> CargoResult<()> {
 fn sync(
     lockfile: &Path,
     local_dst: &Path,
-    registry_id: &SourceId,
     options: &Options,
     config: &Config,
 ) -> CargoResult<()> {
@@ -154,15 +155,16 @@ fn sync(
     let manifest = lockfile.parent().unwrap().join("Cargo.toml");
     let manifest = env::current_dir().unwrap().join(&manifest);
     let ws = Workspace::new(&manifest, config)?;
+
+    if options.flag_git {
+        // Remove any checksums for git dependencies in Cargo.lock
+        // by regenerating lockfile after removing source replacement
+        cargo::ops::generate_lockfile(&ws).unwrap();
+    }
+
     let (packages, resolve) =
         cargo::ops::resolve_ws(&ws).with_context(|| "failed to load pkg lockfile")?;
     packages.get_many(resolve.iter())?;
-
-    let hash = cargo::util::hex::short_hash(registry_id);
-    let ident = registry_id.url().host().unwrap().to_string();
-    let part = format!("{}-{}", ident, hash);
-
-    let cache = config.registry_cache_path().join(&part);
 
     let mut added_crates = HashSet::new();
     let mut added_index = HashSet::new();
@@ -174,6 +176,12 @@ fn sync(
         } else if !id.source_id().is_registry() {
             continue;
         }
+        let registry_id = id.source_id();
+        let hash = cargo::util::hex::short_hash(&registry_id);
+        let ident = registry_id.url().host().unwrap().to_string();
+        let part = format!("{}-{}", ident, hash);
+
+        let cache = config.registry_cache_path().join(&part);
 
         let pkg = packages
             .get_one(id)
@@ -192,7 +200,8 @@ fn sync(
             ar.mode(tar::HeaderMode::Deterministic);
             build_ar(&mut ar, &pkg, config);
         }
-        added_crates.insert(dst);
+        added_crates.insert(dst.clone());
+        let crate_dst = dst;
 
         let name = id.name().to_lowercase();
         let index_dir = canonical_local_dst.join("index");
@@ -203,7 +212,7 @@ fn sync(
             _ => index_dir.join(&name[..2]).join(&name[2..4]).join(name),
         };
         fs::create_dir_all(&dst.parent().unwrap())?;
-        let line = serde_json::to_string(&registry_pkg(&pkg, &resolve)).unwrap();
+        let line = serde_json::to_string(&registry_pkg(&pkg, &resolve, &crate_dst)).unwrap();
 
         let prev = if no_delete || added_index.contains(&dst) {
             read(&dst).unwrap_or(String::new())
@@ -297,8 +306,10 @@ fn build_ar(ar: &mut Builder<GzEncoder<File>>, pkg: &Package, config: &Config) {
     }
 }
 
-fn registry_pkg(pkg: &Package, resolve: &Resolve) -> RegistryPackage {
+fn registry_pkg(pkg: &Package, resolve: &Resolve, crate_file: &Path) -> RegistryPackage {
     let id = pkg.package_id();
+    let source_id = id.source_id();
+    let pkg_url = source_id.url();
     let mut deps = pkg
         .dependencies()
         .iter()
@@ -307,6 +318,8 @@ fn registry_pkg(pkg: &Package, resolve: &Resolve) -> RegistryPackage {
                 Some(explicit) => (explicit.to_string(), Some(dep.package_name().to_string())),
                 None => (dep.package_name().to_string(), None),
             };
+            let dep_source = dep.source_id();
+            let dep_url = dep_source.url();
 
             RegistryDependency {
                 name,
@@ -324,6 +337,7 @@ fn registry_pkg(pkg: &Package, resolve: &Resolve) -> RegistryPackage {
                     DepKind::Build => Some("build".to_string()),
                 },
                 package,
+                registry: (dep_url != pkg_url).then(|| dep_url.to_string()),
             }
         })
         .collect::<Vec<_>>();
@@ -353,7 +367,13 @@ fn registry_pkg(pkg: &Package, resolve: &Resolve) -> RegistryPackage {
             .get(&id)
             .cloned()
             .unwrap_or_default()
-            .unwrap_or_default(),
+            .unwrap_or_else(|| {
+                // Manually add checksum as this is required for (local) registry dependencies
+                // but not normally present for git dependencies
+                let mut hasher = Sha256::new();
+                hasher.update_path(crate_file).unwrap();
+                hasher.finish_hex()
+            }),
         yanked: Some(false),
     }
 }
