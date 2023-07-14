@@ -1,6 +1,6 @@
 [package]
 name = "cargo-local-registry"
-version = "0.2.4"
+version = "0.2.5"
 authors = ["Alex Crichton <alex@alexcrichton.com>"]
 license = "MIT/Apache-2.0"
 readme = "README.md"
@@ -13,7 +13,7 @@ A Cargo subcommand for managing local registries.
 edition = "2021"
 
 [dependencies]
-cargo = "0.69.1"
+cargo = "0.71.0"
 docopt = "1.1.0"
 env_logger = "0.7.0"
 failure = "0.1.8"

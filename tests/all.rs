@@ -4,7 +4,7 @@ use std::env;
 use std::fs::{self, File};
 use std::io::prelude::*;
 use std::process::Command;
-use std::sync::{Once, Mutex, MutexGuard, ONCE_INIT};
+use std::sync::{Once, Mutex, MutexGuard};
 
 use tempfile::TempDir;
 
@@ -20,7 +20,7 @@ fn cmd() -> Command {
     return cmd
 }
 
-static INIT: Once = ONCE_INIT;
+static INIT: Once = Once::new();
 static mut LOCK: *mut Mutex<()> = 0 as *mut _;
 
 fn lock() -> MutexGuard<'static, ()> {
