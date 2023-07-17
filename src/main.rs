@@ -114,7 +114,7 @@ fn real_main(options: Options, config: &mut Config) -> CargoResult<()> {
         .with_context(|| format!("failed to create index: `{}`", index.display()))?;
     let id = match options.flag_host {
         Some(ref s) => SourceId::for_registry(&Url::parse(s)?)?,
-        None => SourceId::crates_io(config)?,
+        None => SourceId::crates_io_maybe_sparse_http(config)?,
     };
 
     let lockfile = match options.flag_sync {
