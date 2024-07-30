@@ -4,7 +4,7 @@ use cargo::core::resolver::Resolve;
 use cargo::core::{Package, SourceId, Workspace};
 use cargo::sources::PathSource;
 use cargo::util::errors::*;
-use cargo::util::Config;
+use cargo::util::GlobalContext;
 use cargo_platform::Platform;
 use docopt::Docopt;
 use flate2::write::GzEncoder;
@@ -60,10 +60,10 @@ fn main() {
     // intended for other consumers of Cargo, but we want to go straight to the
     // source, e.g. crates.io, to fetch crates.
     let mut config = {
-        let config_orig = Config::default().unwrap();
+        let config_orig = GlobalContext::default().unwrap();
         let mut values = config_orig.values().unwrap().clone();
         values.remove("source");
-        let config = Config::default().unwrap();
+        let config = GlobalContext::default().unwrap();
         config.set_values(values).unwrap();
         config
     };
@@ -94,7 +94,7 @@ Options:
     }
 }
 
-fn real_main(options: Options, config: &mut Config) -> CargoResult<()> {
+fn real_main(options: Options, config: &mut GlobalContext) -> CargoResult<()> {
     config.configure(
         options.flag_verbose,
         options.flag_quiet,
@@ -147,7 +147,7 @@ fn sync(
     local_dst: &Path,
     registry_id: &SourceId,
     options: &Options,
-    config: &Config,
+    config: &GlobalContext,
 ) -> CargoResult<()> {
     let no_delete = options.flag_no_delete.unwrap_or(false);
     let canonical_local_dst = local_dst.canonicalize().unwrap_or(local_dst.to_path_buf());
@@ -272,7 +272,7 @@ fn scan_delete(path: &Path, depth: usize, keep: &HashSet<PathBuf>) -> CargoResul
     Ok(())
 }
 
-fn build_ar(ar: &mut Builder<GzEncoder<File>>, pkg: &Package, config: &Config) {
+fn build_ar(ar: &mut Builder<GzEncoder<File>>, pkg: &Package, config: &GlobalContext) {
     let root = pkg.root();
     let src = PathSource::new(pkg.root(), pkg.package_id().source_id(), config);
     for file in src.list_files(pkg).unwrap().iter() {
