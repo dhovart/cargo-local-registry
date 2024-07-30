@@ -6,7 +6,7 @@ use cargo::sources::PathSource;
 use cargo::util::errors::*;
 use cargo::util::GlobalContext;
 use cargo_platform::Platform;
-use docopt::Docopt;
+use clap::Parser as _;
 use flate2::write::GzEncoder;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashSet};
@@ -18,16 +18,32 @@ use std::path::{self, Path, PathBuf};
 use tar::{Builder, Header};
 use url::Url;
 
-#[derive(Deserialize)]
+#[derive(clap::Parser)]
+#[command(version, about)]
 struct Options {
-    arg_path: String,
-    flag_no_delete: Option<bool>,
-    flag_sync: Option<String>,
-    flag_host: Option<String>,
-    flag_verbose: u32,
-    flag_quiet: bool,
-    flag_color: Option<String>,
-    flag_git: bool,
+    /// Sync the registry with LOCK
+    #[arg(short, long)]
+    sync: Option<String>,
+    /// Registry index to sync with
+    #[arg(long)]
+    host: Option<String>,
+    /// Vendor git dependencies as well
+    #[arg(long, default_value_t = false)]
+    git: bool,
+    /// Use verbose output
+    #[arg(short, long, default_value_t)]
+    verbose: u32,
+    /// No output printed to stdout
+    #[arg(short, long, default_value_t = false)]
+    quiet: bool,
+    /// Coloring: auto, always, never
+    #[arg(short, long)]
+    color: Option<String>,
+    /// Don't delete older crates in the local registry directory
+    #[arg(long)]
+    no_delete: Option<bool>,
+
+    path: String,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -68,26 +84,7 @@ fn main() {
         config
     };
 
-    let usage = r#"
-Vendor all dependencies for a project locally
-
-Usage:
-    cargo local-registry [options] [<path>]
-
-Options:
-    -h, --help               Print this message
-    -s, --sync LOCK          Sync the registry with LOCK
-    --host HOST              Registry index to sync with
-    --git                    Vendor git dependencies as well
-    -v, --verbose            Use verbose output
-    -q, --quiet              No output printed to stdout
-    --color WHEN             Coloring: auto, always, never
-    --no-delete              Don't delete older crates in the local registry directory
-"#;
-
-    let options = Docopt::new(usage)
-        .and_then(|d| d.deserialize())
-        .unwrap_or_else(|e| e.exit());
+    let options = Options::parse();
     let result = real_main(options, &mut config);
     if let Err(e) = result {
         cargo::exit_with_error(e.into(), &mut config.shell());
@@ -96,9 +93,9 @@ Options:
 
 fn real_main(options: Options, config: &mut GlobalContext) -> CargoResult<()> {
     config.configure(
-        options.flag_verbose,
-        options.flag_quiet,
-        options.flag_color.as_deref(),
+        options.verbose,
+        options.quiet,
+        options.color.as_deref(),
         /* frozen = */ false,
         /* locked = */ false,
         /* offline = */ false,
@@ -107,17 +104,17 @@ fn real_main(options: Options, config: &mut GlobalContext) -> CargoResult<()> {
         /* cli_config = */ &[],
     )?;
 
-    let path = Path::new(&options.arg_path);
+    let path = Path::new(&options.path);
     let index = path.join("index");
 
     fs::create_dir_all(&index)
         .with_context(|| format!("failed to create index: `{}`", index.display()))?;
-    let id = match options.flag_host {
+    let id = match options.host {
         Some(ref s) => SourceId::for_registry(&Url::parse(s)?)?,
         None => SourceId::crates_io_maybe_sparse_http(config)?,
     };
 
-    let lockfile = match options.flag_sync {
+    let lockfile = match options.sync {
         Some(ref file) => file,
         None => return Ok(()),
     };
@@ -149,7 +146,7 @@ fn sync(
     options: &Options,
     config: &GlobalContext,
 ) -> CargoResult<()> {
-    let no_delete = options.flag_no_delete.unwrap_or(false);
+    let no_delete = options.no_delete.unwrap_or(false);
     let canonical_local_dst = local_dst.canonicalize().unwrap_or(local_dst.to_path_buf());
     let manifest = lockfile.parent().unwrap().join("Cargo.toml");
     let manifest = env::current_dir().unwrap().join(&manifest);
@@ -168,7 +165,7 @@ fn sync(
     let mut added_index = HashSet::new();
     for id in resolve.iter() {
         if id.source_id().is_git() {
-            if !options.flag_git {
+            if !options.git {
                 continue;
             }
         } else if !id.source_id().is_registry() {
