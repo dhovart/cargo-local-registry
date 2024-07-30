@@ -18,7 +18,6 @@ cargo = "0.81.0"
 cargo-platform = "0.1.0"
 docopt = "1.1.0"
 env_logger = "0.11.0"
-failure = "0.1.8"
 flate2 = "1.0.22"
 openssl = { version = '0.10.41', optional = true }
 serde = { version = "1.0.104", features = ['derive'] }
