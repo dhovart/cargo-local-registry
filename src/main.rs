@@ -90,7 +90,7 @@ Options:
         .unwrap_or_else(|e| e.exit());
     let result = real_main(options, &mut config);
     if let Err(e) = result {
-        cargo::exit_with_error(e.into(), &mut *config.shell());
+        cargo::exit_with_error(e.into(), &mut config.shell());
     }
 }
 
@@ -122,7 +122,7 @@ fn real_main(options: Options, config: &mut GlobalContext) -> CargoResult<()> {
         None => return Ok(()),
     };
 
-    sync(Path::new(lockfile), &path, &id, &options, config).with_context(|| "failed to sync")?;
+    sync(Path::new(lockfile), path, &id, &options, config).with_context(|| "failed to sync")?;
 
     println!(
         "add this to your .cargo/config somewhere:
@@ -190,7 +190,7 @@ fn sync(
             let gz = GzEncoder::new(file, flate2::Compression::best());
             let mut ar = Builder::new(gz);
             ar.mode(tar::HeaderMode::Deterministic);
-            build_ar(&mut ar, &pkg, config);
+            build_ar(&mut ar, pkg, config);
         }
         added_crates.insert(dst);
 
@@ -202,11 +202,11 @@ fn sync(
             3 => index_dir.join("3").join(&name[..1]).join(name),
             _ => index_dir.join(&name[..2]).join(&name[2..4]).join(name),
         };
-        fs::create_dir_all(&dst.parent().unwrap())?;
-        let line = serde_json::to_string(&registry_pkg(&pkg, &resolve)).unwrap();
+        fs::create_dir_all(dst.parent().unwrap())?;
+        let line = serde_json::to_string(&registry_pkg(pkg, &resolve)).unwrap();
 
         let prev = if no_delete || added_index.contains(&dst) {
-            read(&dst).unwrap_or(String::new())
+            read(&dst).unwrap_or_default()
         } else {
             // If cleaning old entries (no_delete is not set), don't read the file unless we wrote
             // it in one of the previous iterations.
@@ -255,12 +255,10 @@ fn sync(
 
 fn scan_delete(path: &Path, depth: usize, keep: &HashSet<PathBuf>) -> CargoResult<()> {
     if path.is_file() && !keep.contains(path) {
-        fs::remove_file(&path)?;
+        fs::remove_file(path)?;
     } else if path.is_dir() && depth > 0 {
-        for entry in path.read_dir()? {
-            if let Ok(entry) = entry {
-                scan_delete(&entry.path(), depth - 1, keep)?;
-            }
+        for entry in (path.read_dir()?).flatten() {
+            scan_delete(&entry.path(), depth - 1, keep)?;
         }
 
         let is_empty = path.read_dir()?.next().is_none();
@@ -276,7 +274,7 @@ fn build_ar(ar: &mut Builder<GzEncoder<File>>, pkg: &Package, config: &GlobalCon
     let root = pkg.root();
     let src = PathSource::new(pkg.root(), pkg.package_id().source_id(), config);
     for file in src.list_files(pkg).unwrap().iter() {
-        let relative = file.strip_prefix(&root).unwrap();
+        let relative = file.strip_prefix(root).unwrap();
         let relative = relative.to_str().unwrap();
         let mut file = File::open(file).unwrap();
         let path = format!(
@@ -332,22 +330,19 @@ fn registry_pkg(pkg: &Package, resolve: &Resolve) -> RegistryPackage {
     let features = pkg
         .summary()
         .features()
-        .into_iter()
-        .filter_map(|(k, v)| {
-            let mut v = v
-                .iter()
-                .filter_map(|fv| Some(fv.to_string()))
-                .collect::<Vec<_>>();
+        .iter()
+        .map(|(k, v)| {
+            let mut v = v.iter().map(|fv| fv.to_string()).collect::<Vec<_>>();
             v.sort();
-            Some((k.to_string(), v))
+            (k.to_string(), v)
         })
         .collect();
 
     RegistryPackage {
         name: id.name().to_string(),
         vers: id.version().to_string(),
-        deps: deps,
-        features: features,
+        deps,
+        features,
         cksum: resolve
             .checksums()
             .get(&id)
