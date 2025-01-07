@@ -15,7 +15,7 @@ use std::fs::{self, File};
 use std::io;
 use std::io::prelude::*;
 use std::path::{self, Path, PathBuf};
-use tar::{Builder, Header};
+use tar::Builder;
 use url::Url;
 
 #[derive(Deserialize)]
@@ -285,13 +285,7 @@ fn build_ar(ar: &mut Builder<GzEncoder<File>>, pkg: &Package, config: &GlobalCon
             relative
         );
 
-        let mut header = Header::new_ustar();
-        let metadata = file.metadata().unwrap();
-        header.set_path(&path).unwrap();
-        header.set_metadata(&metadata);
-        header.set_cksum();
-
-        ar.append(&header, &mut file).unwrap();
+        ar.append_file(&path, &mut file).unwrap();
     }
 }
 
