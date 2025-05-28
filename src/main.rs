@@ -272,7 +272,7 @@ fn build_ar(ar: &mut Builder<GzEncoder<File>>, pkg: &Package, config: &GlobalCon
     for file in src.list_files(pkg).unwrap().iter() {
         let relative = file.strip_prefix(root).unwrap();
         let relative = relative.to_str().unwrap();
-        let mut file = File::open(file).unwrap();
+        let mut file = File::open(file.as_ref()).unwrap();
         let path = format!(
             "{}-{}{}{}",
             pkg.name(),
