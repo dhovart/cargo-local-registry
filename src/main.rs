@@ -151,7 +151,7 @@ fn sync(
     let manifest = env::current_dir().unwrap().join(&manifest);
     let ws = Workspace::new(&manifest, config)?;
     let (packages, resolve) =
-        cargo::ops::resolve_ws(&ws).with_context(|| "failed to load pkg lockfile")?;
+        cargo::ops::resolve_ws(&ws, /* dry_run */ false).with_context(|| "failed to load pkg lockfile")?;
     packages.get_many(resolve.iter())?;
 
     let hash = cargo::util::hex::short_hash(registry_id);
