@@ -61,13 +61,13 @@ fn empty_cargo_lock() {
     let lock = td.path().join("Cargo.lock");
     let registry = td.path().join("registry");
     fs::create_dir(td.path().join("src")).unwrap();
-    File::create(&td.path().join("Cargo.toml")).unwrap().write_all(br#"
+    File::create(td.path().join("Cargo.toml")).unwrap().write_all(br#"
         [package]
         name = "foo"
         version = "0.1.0"
         authors = []
     "#).unwrap();
-    File::create(&td.path().join("src/lib.rs")).unwrap().write_all(b"").unwrap();
+    File::create(td.path().join("src/lib.rs")).unwrap().write_all(b"").unwrap();
     File::create(&lock).unwrap().write_all(br#"
 [[package]]
 name = "foo"
@@ -87,7 +87,7 @@ fn libc_dependency() {
     let lock = td.path().join("Cargo.lock");
     let registry = td.path().join("registry");
     fs::create_dir(td.path().join("src")).unwrap();
-    File::create(&td.path().join("Cargo.toml")).unwrap().write_all(br#"
+    File::create(td.path().join("Cargo.toml")).unwrap().write_all(br#"
         [package]
         name = "foo"
         version = "0.1.0"
@@ -96,7 +96,7 @@ fn libc_dependency() {
         [dependencies]
         libc = "0.2.6"
     "#).unwrap();
-    File::create(&td.path().join("src/lib.rs")).unwrap().write_all(b"").unwrap();
+    File::create(td.path().join("src/lib.rs")).unwrap().write_all(b"").unwrap();
     File::create(&lock).unwrap().write_all(br#"
 [[package]]
 name = "foo"
@@ -150,7 +150,7 @@ fn git_dependency() {
     let lock = td.path().join("Cargo.lock");
     let registry = td.path().join("registry");
     fs::create_dir(td.path().join("src")).unwrap();
-    File::create(&td.path().join("Cargo.toml")).unwrap().write_all(br#"
+    File::create(td.path().join("Cargo.toml")).unwrap().write_all(br#"
         [package]
         name = "foo"
         version = "0.1.0"
@@ -159,7 +159,7 @@ fn git_dependency() {
         [dependencies]
         libc = { git = "https://github.com/rust-lang/libc" }
     "#).unwrap();
-    File::create(&td.path().join("src/lib.rs")).unwrap().write_all(b"").unwrap();
+    File::create(td.path().join("src/lib.rs")).unwrap().write_all(b"").unwrap();
     File::create(&lock).unwrap().write_all(br#"
 [[package]]
 name = "foo"
@@ -186,7 +186,7 @@ fn deterministic() {
     let lock = td.path().join("Cargo.lock");
     let registry = td.path().join("registry");
     fs::create_dir(td.path().join("src")).unwrap();
-    File::create(&td.path().join("Cargo.toml")).unwrap().write_all(br#"
+    File::create(td.path().join("Cargo.toml")).unwrap().write_all(br#"
         [package]
         name = "foo"
         version = "0.1.0"
@@ -196,7 +196,7 @@ fn deterministic() {
         libc = "0.1.4"
         filetime = "0.1.10"
     "#).unwrap();
-    File::create(&td.path().join("src/lib.rs")).unwrap().write_all(b"").unwrap();
+    File::create(td.path().join("src/lib.rs")).unwrap().write_all(b"").unwrap();
     File::create(&lock).unwrap().write_all(br#"
 [[package]]
 name = "foo"
@@ -282,7 +282,7 @@ fn lowercased() {
     let lock = td.path().join("Cargo.lock");
     let registry = td.path().join("registry");
     fs::create_dir(td.path().join("src")).unwrap();
-    File::create(&td.path().join("Cargo.toml")).unwrap().write_all(br#"
+    File::create(td.path().join("Cargo.toml")).unwrap().write_all(br#"
         [package]
         name = "foo"
         version = "0.1.0"
@@ -291,7 +291,7 @@ fn lowercased() {
         [dependencies]
         Inflector = "0.11.3"
     "#).unwrap();
-    File::create(&td.path().join("src/lib.rs")).unwrap().write_all(b"").unwrap();
+    File::create(td.path().join("src/lib.rs")).unwrap().write_all(b"").unwrap();
     File::create(&lock).unwrap().write_all(br#"
 [[package]]
 name = "foo"
@@ -324,7 +324,7 @@ fn renamed() {
     let lock = td.path().join("Cargo.lock");
     let registry = td.path().join("registry");
     fs::create_dir(td.path().join("src")).unwrap();
-    File::create(&td.path().join("Cargo.toml")).unwrap().write_all(br#"
+    File::create(td.path().join("Cargo.toml")).unwrap().write_all(br#"
         [package]
         name = "foo"
         version = "0.1.0"
@@ -333,7 +333,7 @@ fn renamed() {
         [dependencies]
         rustc-demangle = "0.1.14"
     "#).unwrap();
-    File::create(&td.path().join("src/lib.rs")).unwrap().write_all(b"").unwrap();
+    File::create(td.path().join("src/lib.rs")).unwrap().write_all(b"").unwrap();
     File::create(&lock).unwrap().write_all(br#"
 [[package]]
 name = "foo"
@@ -366,7 +366,7 @@ fn clean_mode() {
     let lock = td.path().join("Cargo.lock");
     let registry = td.path().join("registry");
     fs::create_dir(td.path().join("src")).unwrap();
-    File::create(&td.path().join("Cargo.toml")).unwrap().write_all(br#"
+    File::create(td.path().join("Cargo.toml")).unwrap().write_all(br#"
         [package]
         name = "foo"
         version = "0.1.0"
@@ -376,7 +376,7 @@ fn clean_mode() {
         lazy_static = "0.2.11"
         language-tags = "0.2.2"
     "#).unwrap();
-    File::create(&td.path().join("src/lib.rs")).unwrap().write_all(b"").unwrap();
+    File::create(td.path().join("src/lib.rs")).unwrap().write_all(b"").unwrap();
     File::create(&lock).unwrap().write_all(br#"
 [[package]]
 name = "foo"
@@ -416,7 +416,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
     assert_eq!(contents, r#"{"name":"language-tags","vers":"0.2.2","deps":[{"name":"heapsize","req":">=0.2.2, <0.4","features":[],"optional":true,"default_features":true,"target":null,"kind":null,"package":null},{"name":"heapsize_plugin","req":"^0.1.2","features":[],"optional":true,"default_features":true,"target":null,"kind":null,"package":null}],"cksum":"a91d884b6667cd606bb5a69aa0c99ba811a115fc68915e7056ec08a46e93199a","features":{"heap_size":["heapsize","heapsize_plugin"],"heapsize":["dep:heapsize"],"heapsize_plugin":["dep:heapsize_plugin"]},"yanked":false}"#);
 
     // Modify the Cargo.toml to swap an existing library, add a new one and delete another
-    File::create(&td.path().join("Cargo.toml")).unwrap().write_all(br#"
+    File::create(td.path().join("Cargo.toml")).unwrap().write_all(br#"
         [package]
         name = "foo"
         version = "0.1.0"

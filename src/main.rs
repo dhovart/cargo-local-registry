@@ -231,7 +231,7 @@ fn sync(
                     .filter(|e| {
                         e.file_name()
                             .to_str()
-                            .map_or(false, |name| name.ends_with(".crate"))
+                            .is_some_and(|name| name.ends_with(".crate"))
                     })
                     .map(|e| e.path())
                     .collect::<Vec<_>>()
