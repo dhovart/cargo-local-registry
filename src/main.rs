@@ -31,8 +31,8 @@ struct Options {
     #[arg(long, default_value_t = false)]
     git: bool,
     /// Use verbose output
-    #[arg(short, long, default_value_t)]
-    verbose: u32,
+    #[arg(short, long, action = clap::ArgAction::Count)]
+    verbose: u8,
     /// No output printed to stdout
     #[arg(short, long, default_value_t = false)]
     quiet: bool,
@@ -41,7 +41,7 @@ struct Options {
     color: Option<String>,
     /// Don't delete older crates in the local registry directory
     #[arg(long)]
-    no_delete: Option<bool>,
+    no_delete: bool,
 
     path: String,
 }
@@ -93,7 +93,7 @@ fn main() {
 
 fn real_main(options: Options, config: &mut GlobalContext) -> CargoResult<()> {
     config.configure(
-        options.verbose,
+        options.verbose as u32,
         options.quiet,
         options.color.as_deref(),
         /* frozen = */ false,
@@ -146,7 +146,6 @@ fn sync(
     options: &Options,
     config: &GlobalContext,
 ) -> CargoResult<()> {
-    let no_delete = options.no_delete.unwrap_or(false);
     let canonical_local_dst = local_dst.canonicalize().unwrap_or(local_dst.to_path_buf());
     let manifest = lockfile.parent().unwrap().join("Cargo.toml");
     let manifest = env::current_dir().unwrap().join(&manifest);
@@ -202,7 +201,7 @@ fn sync(
         fs::create_dir_all(dst.parent().unwrap())?;
         let line = serde_json::to_string(&registry_pkg(pkg, &resolve)).unwrap();
 
-        let prev = if no_delete || added_index.contains(&dst) {
+        let prev = if options.no_delete || added_index.contains(&dst) {
             read(&dst).unwrap_or_default()
         } else {
             // If cleaning old entries (no_delete is not set), don't read the file unless we wrote
@@ -224,7 +223,7 @@ fn sync(
         added_index.insert(dst);
     }
 
-    if !no_delete {
+    if !options.no_delete {
         let existing_crates: Vec<PathBuf> = canonical_local_dst
             .read_dir()
             .map(|iter| {

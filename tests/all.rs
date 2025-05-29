@@ -15,9 +15,7 @@ fn cmd() -> Command {
         me.pop();
     }
     me.push("cargo-local-registry");
-    let mut cmd = Command::new(me);
-    cmd.arg("local-registry");
-    return cmd
+    Command::new(me)
 }
 
 static INIT: Once = Once::new();
