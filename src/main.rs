@@ -43,6 +43,7 @@ struct Options {
     #[arg(long)]
     no_delete: bool,
 
+    /// Path to the local registry
     path: String,
 }
 
