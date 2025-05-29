@@ -85,7 +85,15 @@ fn main() {
         config
     };
 
-    let options = Options::parse();
+    let options = if std::env::var("CARGO").is_err() || std::env::var("CARGO_PKG_NAME").is_ok() {
+        // We're running the binary directly or inside `cargo run`.
+        Options::parse()
+    } else {
+        // We're running as a `cargo` subcommand. Let's skip the second argument.
+        let mut args = std::env::args().collect::<Vec<_>>();
+        args.remove(1);
+        Options::parse_from(args)
+    };
     let result = real_main(options, &mut config);
     if let Err(e) = result {
         cargo::exit_with_error(e.into(), &mut config.shell());
