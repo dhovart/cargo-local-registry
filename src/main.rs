@@ -160,7 +160,7 @@ fn sync(
     let manifest = env::current_dir().unwrap().join(&manifest);
     let ws = Workspace::new(&manifest, config)?;
     let (packages, resolve) =
-        cargo::ops::resolve_ws(&ws).with_context(|| "failed to load pkg lockfile")?;
+        cargo::ops::resolve_ws(&ws, /* dry_run */ false).with_context(|| "failed to load pkg lockfile")?;
     packages.get_many(resolve.iter())?;
 
     let hash = cargo::util::hex::short_hash(registry_id);
@@ -240,7 +240,7 @@ fn sync(
                     .filter(|e| {
                         e.file_name()
                             .to_str()
-                            .map_or(false, |name| name.ends_with(".crate"))
+                            .is_some_and(|name| name.ends_with(".crate"))
                     })
                     .map(|e| e.path())
                     .collect::<Vec<_>>()
@@ -281,7 +281,7 @@ fn build_ar(ar: &mut Builder<GzEncoder<File>>, pkg: &Package, config: &GlobalCon
     for file in src.list_files(pkg).unwrap().iter() {
         let relative = file.strip_prefix(root).unwrap();
         let relative = relative.to_str().unwrap();
-        let mut file = File::open(file).unwrap();
+        let mut file = File::open(file.as_ref()).unwrap();
         let path = format!(
             "{}-{}{}{}",
             pkg.name(),
