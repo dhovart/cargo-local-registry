@@ -2,6 +2,7 @@ name: Publish Crate
 
 
 on:
+  workflow_dispatch:
   push:
     tags:
       - 'v*'
@@ -27,6 +28,13 @@ jobs:
 
       - name: Run cargo audit
         run: cargo audit
+
+      - name: Commit Cargo.lock if changed
+        run: |
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          git add Cargo.lock
+          git diff --cached --quiet || git commit -m "Update Cargo.lock [skip ci]"
 
       - name: Publish to crates.io
         env:
