@@ -15,7 +15,7 @@ edition = "2021"
 [dependencies]
 anyhow = "1.0.47"
 cargo = "0.89.0"
-cargo-platform = "0.2.0"
+cargo-platform = "0.3.0"
 clap = { version = "4.5.40", features = ["derive"] }
 env_logger = "0.11.8"
 flate2 = "1.1.2"
