@@ -2,7 +2,6 @@ name: Publish Crate
 
 
 on:
-  workflow_dispatch:  # FIXME: remove if wf is ok
   push:
     tags:
       - 'v*'
@@ -32,4 +31,4 @@ jobs:
       - name: Publish to crates.io
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-        run: cargo publish --locked --dry-run # FIXME: remove --dry-run if wf is ok
+        run: cargo publish --locked
