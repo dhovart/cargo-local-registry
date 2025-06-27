@@ -1,0 +1,11 @@
+name: Publish Crate
+
+on:
+  push:
+    branches: [master]
+
+jobs:
+  noop:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "GitHub Actions enabled"
