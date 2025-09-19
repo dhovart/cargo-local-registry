@@ -13,7 +13,7 @@ A Cargo subcommand for managing local registries.
 edition = "2021"
 
 [dependencies]
-anyhow = "1.0.47"
+anyhow = "1.0.100"
 cargo = "0.89.0"
 cargo-platform = "0.3.0"
 clap = { version = "4.5.41", features = ["derive"] }
