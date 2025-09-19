@@ -16,7 +16,7 @@ edition = "2021"
 anyhow = "1.0.47"
 cargo = "0.89.0"
 cargo-platform = "0.3.0"
-clap = { version = "4.5.41", features = ["derive"] }
+clap = { version = "4.5.48", features = ["derive"] }
 env_logger = "0.11.8"
 flate2 = "1.1.2"
 openssl = { version = '0.10.73', optional = true }
