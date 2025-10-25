@@ -41,7 +41,12 @@ reqwest = { version = "0.12", features = ["json", "stream"] }
 semver = "1.0"
 
 [dev-dependencies]
+axum-test = "18.1.0"
+hyper = "1.7.0"
+serde_json = "1.0.141"
 tempfile = "3.1.0"
+tokio-test = "0.4.4"
+tower = "0.5.2"
 
 [features]
 vendored-openssl = ['openssl/vendored']

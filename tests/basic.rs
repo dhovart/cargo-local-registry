@@ -11,6 +11,18 @@ use std::sync::{Mutex, MutexGuard, Once};
 use serde_json::Value;
 use tempfile::TempDir;
 
+pub static INIT: Once = Once::new();
+pub static mut LOCK: *mut Mutex<()> = 0 as *mut _;
+
+pub fn lock() -> MutexGuard<'static, ()> {
+    unsafe {
+        INIT.call_once(|| {
+            LOCK = Box::into_raw(Box::new(Mutex::new(())));
+        });
+        (*LOCK).lock().unwrap()
+    }
+}
+
 fn cmd() -> Command {
     let mut me = env::current_exe().unwrap();
     me.pop();
@@ -19,18 +31,6 @@ fn cmd() -> Command {
     }
     me.push("cargo-local-registry");
     Command::new(me)
-}
-
-static INIT: Once = Once::new();
-static mut LOCK: *mut Mutex<()> = 0 as *mut _;
-
-fn lock() -> MutexGuard<'static, ()> {
-    unsafe {
-        INIT.call_once(|| {
-            LOCK = Box::into_raw(Box::new(Mutex::new(())));
-        });
-        (*LOCK).lock().unwrap()
-    }
 }
 
 #[test]

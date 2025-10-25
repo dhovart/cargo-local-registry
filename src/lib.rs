@@ -54,7 +54,7 @@ pub async fn serve_registry(
     Ok(())
 }
 
-async fn serve_config(
+pub async fn serve_config(
     axum::extract::State(ExecutionControl { server_url, .. }): axum::extract::State<
         ExecutionControl,
     >,
@@ -71,7 +71,7 @@ async fn serve_config(
     Json(config)
 }
 
-async fn serve_index(
+pub async fn serve_index(
     axum::extract::State(ExecutionControl {
         registry_path,
         reqwest_client,
@@ -191,7 +191,7 @@ async fn serve_index(
     }
 }
 
-async fn serve_crate_file(
+pub async fn serve_crate_file(
     axum::extract::State(state): axum::extract::State<ExecutionControl>,
     AxumPath(filename): AxumPath<String>,
 ) -> Result<Response, StatusCode> {
@@ -334,7 +334,7 @@ async fn serve_crate_file(
     }
 }
 
-async fn serve_file(
+pub async fn serve_file(
     axum::extract::State(ExecutionControl { registry_path, .. }): axum::extract::State<
         ExecutionControl,
     >,
