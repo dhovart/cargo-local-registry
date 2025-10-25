@@ -88,6 +88,10 @@ enum SubCommands {
 
         /// Path to the local registry
         path: String,
+
+        /// Disable proxying to crates.io when crates are not found locally
+        #[arg(long, default_value_t = false)]
+        no_proxy: bool,
     },
 }
 
@@ -172,7 +176,7 @@ async fn main() {
             remove_previously_synced,
             &config,
         ),
-        SubCommands::Serve { host, port, path } => {
+        SubCommands::Serve { host, port, path, no_proxy } => {
             serve_registry(
                 host,
                 port,
@@ -180,6 +184,7 @@ async fn main() {
                 registry_url,
                 include_git,
                 remove_previously_synced,
+                !no_proxy, // Enable proxy by default, disable if no_proxy is true
                 &config,
             )
             .await
