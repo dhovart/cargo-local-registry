@@ -92,6 +92,10 @@ enum SubCommands {
         /// Disable proxying to crates.io when crates are not found locally
         #[arg(long, default_value_t = false)]
         no_proxy: bool,
+
+        /// Disable cleaning old versions when caching new ones (keeps all versions)
+        #[arg(long, default_value_t = false)]
+        no_clean: bool,
     },
 }
 
@@ -176,19 +180,13 @@ async fn main() {
             remove_previously_synced,
             &config,
         ),
-        SubCommands::Serve { host, port, path, no_proxy } => {
-            serve_registry(
-                host,
-                port,
-                path,
-                registry_url,
-                include_git,
-                remove_previously_synced,
-                !no_proxy, // Enable proxy by default, disable if no_proxy is true
-                &config,
-            )
-            .await
-        }
+        SubCommands::Serve {
+            host,
+            port,
+            path,
+            no_proxy,
+            no_clean,
+        } => serve_registry(host, port, path, !no_proxy, !no_clean).await,
     } {
         cargo::exit_with_error(err.into(), &mut config.shell());
     }
