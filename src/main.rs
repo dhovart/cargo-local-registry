@@ -19,6 +19,10 @@ use std::path::{self, Path, PathBuf};
 use tar::{Builder, Header};
 use url::Url;
 
+use cargo_local_registry::serve_registry;
+
+const DEFAULT_CRATE_PORT: u16 = 27283;
+
 #[derive(Debug)]
 enum FileTask {
     Copy {
@@ -37,9 +41,6 @@ enum FileTask {
 #[derive(clap::Parser)]
 #[command(version, about)]
 struct Options {
-    /// Sync the registry with LOCK
-    #[arg(short, long)]
-    sync: Option<String>,
     /// Registry index to sync with
     #[arg(long)]
     host: Option<String>,
@@ -59,8 +60,35 @@ struct Options {
     #[arg(long)]
     no_delete: bool,
 
-    /// Path to the local registry
-    path: String,
+    #[command(subcommand)]
+    command: SubCommands,
+}
+
+#[derive(clap::Parser)]
+enum SubCommands {
+    // Create a local registry
+    Create {
+        /// Path to Cargo.lock to sync from
+        #[arg(long)]
+        sync: Option<String>,
+
+        /// Path to the local registry
+        path: String,
+    },
+
+    // Serve local registry over HTTP
+    Serve {
+        /// Host to bind to
+        #[arg(long, default_value = "127.0.0.1")]
+        host: String,
+
+        /// Port to bind to
+        #[arg(long, default_value_t = DEFAULT_CRATE_PORT)]
+        port: u16,
+
+        /// Path to the local registry
+        path: String,
+    },
 }
 
 #[derive(Deserialize, Serialize)]
@@ -85,8 +113,14 @@ struct RegistryDependency {
     package: Option<String>,
 }
 
-fn main() {
-    env_logger::init();
+#[tokio::main]
+async fn main() {
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+        )
+        .init();
 
     // We're doing the vendoring operation outselves, so we don't actually want
     // to respect any of the `source` configuration in Cargo itself. That's
@@ -110,41 +144,84 @@ fn main() {
         args.remove(1);
         Options::parse_from(args)
     };
-    let result = real_main(options, &mut config);
-    if let Err(e) = result {
-        cargo::exit_with_error(e.into(), &mut config.shell());
-    }
-}
 
-fn real_main(options: Options, config: &mut GlobalContext) -> CargoResult<()> {
-    config.configure(
+    if let Err(err) = config.configure(
         options.verbose as u32,
         options.quiet,
         options.color.as_deref(),
-        /* frozen = */ false,
-        /* locked = */ false,
-        /* offline = */ false,
-        /* target dir = */ &None,
-        /* unstable flags = */ &[],
-        /* cli_config = */ &[],
-    )?;
+        false,
+        false,
+        false,
+        &None,
+        &[],
+        &[],
+    ) {
+        cargo::exit_with_error(err.into(), &mut config.shell());
+    }
 
-    let path = Path::new(&options.path);
+    let registry_url = options.host;
+    let include_git = options.git;
+    let remove_previously_synced = !options.no_delete;
+
+    if let Err(err) = match options.command {
+        SubCommands::Create { path, sync } => create_registry(
+            path,
+            sync,
+            registry_url,
+            include_git,
+            remove_previously_synced,
+            &config,
+        ),
+        SubCommands::Serve { host, port, path } => {
+            serve_registry(
+                host,
+                port,
+                path,
+                registry_url,
+                include_git,
+                remove_previously_synced,
+                &config,
+            )
+            .await
+        }
+    } {
+        cargo::exit_with_error(err.into(), &mut config.shell());
+    }
+}
+
+fn create_registry(
+    path: String,
+    sync_lockfile: Option<String>,
+    registry_url: Option<String>,
+    include_git: bool,
+    remove_previously_synced: bool,
+    config: &GlobalContext,
+) -> CargoResult<()> {
+    let path = Path::new(&path);
     let index = path.join("index");
 
     fs::create_dir_all(&index)
         .with_context(|| format!("failed to create index: `{}`", index.display()))?;
-    let id = match options.host {
-        Some(ref s) => SourceId::for_registry(&Url::parse(s)?)?,
+
+    let id = match registry_url {
+        Some(input) => SourceId::for_registry(&Url::parse(&input)?)?,
         None => SourceId::crates_io_maybe_sparse_http(config)?,
     };
 
-    let lockfile = match options.sync {
-        Some(ref file) => file,
+    let lockfile = match sync_lockfile {
+        Some(file) => file,
         None => return Ok(()),
     };
 
-    sync(Path::new(lockfile), path, &id, &options, config).with_context(|| "failed to sync")?;
+    sync(
+        Path::new(&lockfile),
+        path,
+        &id,
+        include_git,
+        remove_previously_synced,
+        config,
+    )
+    .with_context(|| "failed to sync")?;
 
     let registry_path = config.cwd().join(path);
     let registry_url = id.url();
@@ -174,7 +251,8 @@ fn sync(
     lockfile: &Path,
     local_dst: &Path,
     registry_id: &SourceId,
-    options: &Options,
+    include_git: bool,
+    remove_previously_synced: bool,
     config: &GlobalContext,
 ) -> CargoResult<()> {
     let canonical_local_dst = local_dst.canonicalize().unwrap_or(local_dst.to_path_buf());
@@ -197,7 +275,7 @@ fn sync(
 
     for id in resolve.iter() {
         if id.source_id().is_git() {
-            if !options.git {
+            if !include_git {
                 continue;
             }
         } else if !id.source_id().is_registry() {
@@ -287,7 +365,7 @@ fn sync(
 
         fs::create_dir_all(index_dst.parent().unwrap())?;
 
-        let prev = if options.no_delete || added_index.contains(&index_dst) {
+        let prev = if !remove_previously_synced || added_index.contains(&index_dst) {
             read(&index_dst).unwrap_or_default()
         } else {
             // If cleaning old entries (no_delete is not set), don't read the file unless we wrote
@@ -309,7 +387,7 @@ fn sync(
         added_index.insert(index_dst);
     }
 
-    if !options.no_delete {
+    if remove_previously_synced {
         let existing_crates: Vec<PathBuf> = canonical_local_dst
             .read_dir()
             .map(|iter| {
