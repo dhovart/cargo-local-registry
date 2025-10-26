@@ -49,11 +49,13 @@ And the resulting binary will be inside `target/debug`
 
 ## Usage
 
+### Local file generation
+
 One of the primary operations will be to create a local registry from a lock
 file itself. This can be done via
 
 ```
-cargo local-registry --sync path/to/Cargo.lock path/to/registry
+cargo local-registry create --sync path/to/Cargo.lock path/to/registry
 ```
 
 This command will:
@@ -62,6 +64,28 @@ This command will:
 * Verify all checksums of what's downloaded
 * Place all downloads in `path/to/registry`
 * Prepare the index of `path/to/registry` to reflect all this information
+
+### Local http server
+
+An alternative approach is to serve the offline repository through a
+local http server.  This may be preferred as the baseline file service
+will build files sequentially and the http server can be setup as a sparse,
+which will download and build in parallel.
+
+This server defaults to proxying to crates.io and then will cache used
+crates locally within the offline server.  It is designed to be a long
+running local service.
+
+Add the following to a config.toml:
+
+```config.toml
+[source.crates-io]
+registry = 'sparse+https://index.crates.io/'
+replace-with = 'local-registry'
+
+[source.local-registry]
+registry = 'sparse+http://127.0.0.1:27283/index/'
+```
 
 # License
 

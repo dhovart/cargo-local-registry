@@ -1,5 +1,8 @@
+use std::collections::HashMap;
 use std::fs::{self, File};
 use std::io::Write;
+use std::sync::Arc;
+use std::time::Duration;
 
 use axum_test::TestServer;
 use cargo_local_registry::{ExecutionControl, serve_registry};
@@ -55,6 +58,8 @@ fn create_test_app(
         reqwest_client: client,
         enable_proxy,
         clean,
+        index_cache: Arc::new(std::sync::RwLock::new(HashMap::new())),
+        cache_ttl: Duration::from_secs(15 * 60),
     };
 
     axum::Router::new()
@@ -63,8 +68,8 @@ fn create_test_app(
             axum::routing::get(cargo_local_registry::serve_config),
         )
         .route(
-            "/index/{crate_name}",
-            axum::routing::get(cargo_local_registry::serve_index),
+            "/index/{*path}",
+            axum::routing::get(cargo_local_registry::serve_index_generic),
         )
         .route(
             "/{filename}",
@@ -171,4 +176,147 @@ async fn test_serve_registry_function_signature() {
     let registry_path = _registry.path().to_string_lossy().to_string();
 
     let _future = serve_registry("127.0.0.1".to_string(), 8080, registry_path, false, false);
+}
+
+#[tokio::test]
+async fn test_sparse_registry_routing() {
+    let registry = create_test_registry().await;
+    let app = create_test_app(registry.path().to_path_buf(), true, false);
+    let server = TestServer::new(app).unwrap();
+
+    let response = server.get("/index/1/z").await;
+    println!("1-char route status: {}", response.status_code());
+
+    let response = server.get("/index/2/cc").await;
+    println!("2-char route status: {}", response.status_code());
+
+    let response = server.get("/index/3/a/arc").await;
+    println!("3-char route status: {}", response.status_code());
+
+    let response = server.get("/index/aw/s-/aws-lambda-events").await;
+    println!("aws-lambda-events route status: {}", response.status_code());
+
+    // Should not be 500 (server error) - routing should work
+    assert_ne!(
+        response.status_code(),
+        axum::http::StatusCode::INTERNAL_SERVER_ERROR
+    );
+    // Should be either 200 (proxied) or 404 (not found), not routing error
+    assert!(
+        response.status_code() == axum::http::StatusCode::OK
+            || response.status_code() == axum::http::StatusCode::NOT_FOUND
+    );
+}
+
+#[tokio::test]
+async fn test_aws_lambda_events_path_specifically() {
+    let registry = create_test_registry().await;
+    let app = create_test_app(registry.path().to_path_buf(), true, false);
+    let server = TestServer::new(app).unwrap();
+
+    // Test the exact failing path
+    let response = server.get("/index/aw/s-/aws-lambda-events").await;
+
+    println!(
+        "aws-lambda-events response status: {}",
+        response.status_code()
+    );
+
+    // The key test: this should NOT be a routing error (500)
+    // It should be handled by one of our index routes
+    assert_ne!(
+        response.status_code(),
+        axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+        "Request should not cause server error - routing should work"
+    );
+
+    // Should be handled by serve_index_long route, not fallback
+    // If proxy works: 200, if crate doesn't exist: 404
+    let valid_statuses = [
+        axum::http::StatusCode::OK,
+        axum::http::StatusCode::NOT_FOUND,
+    ];
+    assert!(
+        valid_statuses.contains(&response.status_code()),
+        "Expected 200 or 404, got {}",
+        response.status_code()
+    );
+}
+
+#[tokio::test]
+async fn test_crate_filename_with_digit_suffix() {
+    let registry = create_test_registry().await;
+
+    // Create sec1-0.7.3.crate in the registry
+    let sec1_crate = registry.path().join("sec1-0.7.3.crate");
+    File::create(&sec1_crate)
+        .unwrap()
+        .write_all(b"fake crate content for sec1")
+        .unwrap();
+
+    let app = create_test_app(registry.path().to_path_buf(), false, false);
+    let server = TestServer::new(app).unwrap();
+
+    let response = server.get("/sec1-0.7.3.crate").await;
+    response.assert_status_ok();
+    response.assert_header("content-type", "application/octet-stream");
+
+    let content = response.as_bytes();
+    assert_eq!(content.as_ref(), b"fake crate content for sec1");
+}
+
+#[tokio::test]
+async fn test_crate_filename_with_complex_version() {
+    let registry = create_test_registry().await;
+
+    // Create curl-sys-0.4.80+curl-8.12.1.crate in the registry
+    let curl_sys_crate = registry.path().join("curl-sys-0.4.80+curl-8.12.1.crate");
+    File::create(&curl_sys_crate)
+        .unwrap()
+        .write_all(b"fake crate content for curl-sys")
+        .unwrap();
+
+    let app = create_test_app(registry.path().to_path_buf(), false, false);
+    let server = TestServer::new(app).unwrap();
+
+    let response = server.get("/curl-sys-0.4.80+curl-8.12.1.crate").await;
+    response.assert_status_ok();
+    response.assert_header("content-type", "application/octet-stream");
+
+    let content = response.as_bytes();
+    assert_eq!(content.as_ref(), b"fake crate content for curl-sys");
+}
+
+#[tokio::test]
+async fn test_crate_filename_parsing_with_proxy() {
+    // Test that the parsing logic properly extracts crate name and version for proxy requests
+    let registry = create_test_registry().await;
+    let app = create_test_app(registry.path().to_path_buf(), true, false);
+    let server = TestServer::new(app).unwrap();
+
+    // These files don't exist locally, so if parsing is correct, it should try to proxy
+    // and return 404 if crates.io doesn't have them (or 200 if it does)
+    let test_cases = vec!["/sec1-0.7.3.crate", "/curl-sys-0.4.80+curl-8.12.1.crate"];
+
+    for path in test_cases {
+        let response = server.get(path).await;
+        // Should not return BAD_REQUEST (400) which would indicate parsing failure
+        assert_ne!(
+            response.status_code(),
+            axum::http::StatusCode::BAD_REQUEST,
+            "Path {} should not return 400 - this indicates parsing failure",
+            path
+        );
+        // Valid responses: 200 (found and proxied), 404 (not found on crates.io)
+        let valid_statuses = [
+            axum::http::StatusCode::OK,
+            axum::http::StatusCode::NOT_FOUND,
+        ];
+        assert!(
+            valid_statuses.contains(&response.status_code()),
+            "Path {} returned unexpected status: {}",
+            path,
+            response.status_code()
+        );
+    }
 }

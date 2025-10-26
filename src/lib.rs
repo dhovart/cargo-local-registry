@@ -1,4 +1,12 @@
+mod crates;
+mod index;
+mod parsing;
+mod types;
+
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, RwLock};
+use std::time::{Duration, Instant};
 
 use axum::{
     Json, Router, extract::Path as AxumPath, http::StatusCode, response::Response, routing::get,
@@ -6,14 +14,8 @@ use axum::{
 use cargo::util::errors::*;
 use reqwest::Client;
 
-#[derive(Clone)]
-pub struct ExecutionControl {
-    pub registry_path: PathBuf,
-    pub server_url: String,
-    pub reqwest_client: Client,
-    pub enable_proxy: bool,
-    pub clean: bool,
-}
+use parsing::parse_crate_filename;
+pub use types::{CachedIndex, DEFAULT_REFRESH_TTL_SECS, ExecutionControl};
 
 pub async fn serve_registry(
     host: String,
@@ -32,11 +34,13 @@ pub async fn serve_registry(
         reqwest_client: client.clone(),
         enable_proxy,
         clean,
+        index_cache: Arc::new(RwLock::new(HashMap::new())),
+        cache_ttl: Duration::from_secs(DEFAULT_REFRESH_TTL_SECS),
     };
 
     let app = Router::new()
         .route("/index/config.json", get(serve_config))
-        .route("/index/{crate_name}", get(serve_index))
+        .route("/index/{*path}", get(serve_index_generic))
         .route("/{filename}", get(serve_crate_file))
         .fallback(serve_file)
         .with_state(state);
@@ -71,38 +75,130 @@ pub async fn serve_config(
     Json(config)
 }
 
-pub async fn serve_index(
+pub async fn serve_index_generic(
     axum::extract::State(ExecutionControl {
         registry_path,
         reqwest_client,
         enable_proxy,
+        index_cache,
+        cache_ttl,
         ..
     }): axum::extract::State<ExecutionControl>,
-    AxumPath(crate_name): AxumPath<String>,
+    AxumPath(path): AxumPath<String>,
 ) -> Result<Response, StatusCode> {
-    tracing::info!("Serving index for crate: {}", crate_name);
+    let crate_name = path.split('/').next_back().unwrap_or(&path).to_string();
+    tracing::info!(
+        "Serving index for crate: {} (from path: {})",
+        crate_name,
+        path
+    );
     let crate_name = crate_name.to_lowercase();
-    let index_path = match crate_name.len() {
-        1 => registry_path.join("index").join("1").join(&crate_name),
-        2 => registry_path.join("index").join("2").join(&crate_name),
-        3 => registry_path
-            .join("index")
-            .join("3")
-            .join(&crate_name[..1])
-            .join(&crate_name),
-        _ => registry_path
-            .join("index")
-            .join(&crate_name[..2])
-            .join(&crate_name[2..4])
-            .join(&crate_name),
-    };
+    let index_path = index::get_index_path(&registry_path, &crate_name);
 
     tracing::debug!("Looking for index file at: {}", index_path.display());
+
+    if enable_proxy {
+        let should_try_refresh = if let Ok(cache) = index_cache.read() {
+            if let Some(cached) = cache.get(&crate_name) {
+                let since_last_check = cached.last_check.elapsed();
+                if since_last_check < cache_ttl {
+                    tracing::info!(
+                        "Serving {} from cache (last checked {:?} ago)",
+                        crate_name,
+                        since_last_check
+                    );
+                    let mut response =
+                        Response::new(axum::body::Body::from(cached.content.clone()));
+                    response.headers_mut().insert(
+                        axum::http::header::CONTENT_TYPE,
+                        "text/plain".parse().unwrap(),
+                    );
+                    return Ok(response);
+                } else {
+                    tracing::info!(
+                        "Checking if crates.io is responsive for {} (last checked {:?} ago)",
+                        crate_name,
+                        since_last_check
+                    );
+                    true
+                }
+            } else {
+                true
+            }
+        } else {
+            true
+        };
+
+        if should_try_refresh {
+            tracing::info!("Trying quick fetch from crates.io for {}", crate_name);
+
+            let crates_io_url = index::get_crates_io_index_url(&crate_name);
+
+            let fast_fail_duration = Duration::from_millis(500);
+
+            let request = reqwest_client
+                .get(&crates_io_url)
+                .timeout(fast_fail_duration);
+
+            match request.send().await {
+                Ok(response) if response.status().is_success() => match response.bytes().await {
+                    Ok(content) => {
+                        tracing::info!(
+                            "Successfully fetched fresh index for {} from crates.io in <500ms, {} bytes - caching",
+                            crate_name,
+                            content.len()
+                        );
+
+                        if let Ok(mut cache) = index_cache.write() {
+                            cache.insert(
+                                crate_name.clone(),
+                                CachedIndex {
+                                    content: content.clone(),
+                                    last_check: Instant::now(),
+                                },
+                            );
+                            tracing::debug!("Cached fresh index for {}", crate_name);
+                        }
+
+                        let mut response = Response::new(axum::body::Body::from(content));
+                        response.headers_mut().insert(
+                            axum::http::header::CONTENT_TYPE,
+                            "text/plain".parse().unwrap(),
+                        );
+                        return Ok(response);
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed to read response from crates.io: {}", e);
+                    }
+                },
+                Ok(response) => {
+                    tracing::warn!(
+                        "crates.io returned status {}: {}",
+                        response.status(),
+                        crate_name
+                    );
+                }
+                Err(e) => {
+                    tracing::info!(
+                        "crates.io timeout or error for {} ({}), using cache",
+                        crate_name,
+                        e
+                    );
+                }
+            }
+
+            if let Ok(mut cache) = index_cache.write()
+                && let Some(cached) = cache.get_mut(&crate_name) {
+                    cached.last_check = Instant::now();
+                    tracing::debug!("Updated last_check for {}", crate_name);
+                }
+        }
+    }
 
     match std::fs::read(&index_path) {
         Ok(content) => {
             tracing::info!(
-                "Successfully served index for {}, {} bytes",
+                "Serving cached index for {}, {} bytes",
                 crate_name,
                 content.len()
             );
@@ -114,30 +210,19 @@ pub async fn serve_index(
             Ok(response)
         }
         Err(e) => {
-            tracing::warn!("Failed to read local index file for {}: {}", crate_name, e);
+            tracing::warn!(
+                "No local index file for {} and proxy failed: {}",
+                crate_name,
+                e
+            );
 
-            // If proxy is enabled, try to fetch from crates.io
             if enable_proxy {
                 tracing::info!(
                     "Attempting to proxy index for {} from crates.io",
                     crate_name
                 );
 
-                let crates_io_url = match crate_name.len() {
-                    1 => format!("https://index.crates.io/1/{}", crate_name),
-                    2 => format!("https://index.crates.io/2/{}", crate_name),
-                    3 => format!(
-                        "https://index.crates.io/3/{}/{}",
-                        &crate_name[..1],
-                        crate_name
-                    ),
-                    _ => format!(
-                        "https://index.crates.io/{}/{}/{}",
-                        &crate_name[..2],
-                        &crate_name[2..4],
-                        crate_name
-                    ),
-                };
+                let crates_io_url = index::get_crates_io_index_url(&crate_name);
 
                 match reqwest_client.get(&crates_io_url).send().await {
                     Ok(response) if response.status().is_success() => {
@@ -149,12 +234,19 @@ pub async fn serve_index(
                                     content.len()
                                 );
 
-                                // Don't cache the index yet - we'll cache specific versions when .crate files are downloaded
-                                tracing::debug!(
-                                    "Returning full index for dependency resolution, not caching yet"
-                                );
+                                tracing::info!("Caching full index for {} locally", crate_name);
 
-                                // Return the full content to the client (for dependency resolution)
+                                if let Some(parent) = index_path.parent()
+                                    && let Err(e) = std::fs::create_dir_all(parent) {
+                                        tracing::warn!("Failed to create index directory: {}", e);
+                                    }
+
+                                if let Err(e) = std::fs::write(&index_path, &content) {
+                                    tracing::warn!("Failed to cache index file locally: {}", e);
+                                } else {
+                                    tracing::info!("Successfully cached index for {}", crate_name);
+                                }
+
                                 let mut response = Response::new(axum::body::Body::from(content));
                                 response.headers_mut().insert(
                                     axum::http::header::CONTENT_TYPE,
@@ -218,24 +310,10 @@ pub async fn serve_crate_file(
             Err(e) => {
                 tracing::warn!("Failed to read local crate file {}: {}", filename, e);
 
-                // If proxy is enabled, try to fetch from crates.io
                 if state.enable_proxy {
                     tracing::info!("Attempting to proxy crate file {} from crates.io", filename);
 
-                    // Parse the filename to extract crate name and version
-                    // Format is expected to be {crate}-{version}.crate
-                    let crate_info = if let Some(stripped) = filename.strip_suffix(".crate") {
-                        // Find the last dash to separate name and version
-                        if let Some(dash_pos) = stripped.rfind('-') {
-                            let crate_name = &stripped[..dash_pos];
-                            let version = &stripped[dash_pos + 1..];
-                            Some((crate_name, version))
-                        } else {
-                            None
-                        }
-                    } else {
-                        None
-                    };
+                    let crate_info = parse_crate_filename(&filename);
 
                     let crates_io_url = if let Some((crate_name, version)) = crate_info {
                         format!(
@@ -258,16 +336,14 @@ pub async fn serve_crate_file(
                                     );
 
                                     if let Some((crate_name, version)) = crate_info {
-                                        // Remove any existing versions of this crate before caching the new one
                                         if state.clean {
-                                            remove_prior_crate_versions(
+                                            crates::remove_prior_versions(
                                                 &state.registry_path,
                                                 crate_name,
                                                 version,
                                             );
                                         }
 
-                                        // Save new crate file to local registry
                                         if let Err(e) = std::fs::write(&crate_path, &content) {
                                             tracing::warn!(
                                                 "Failed to cache crate file locally: {}",
@@ -275,7 +351,6 @@ pub async fn serve_crate_file(
                                             );
                                         }
 
-                                        // Cache only this version's index entry (replacing any previous)
                                         cache_specific_index_version(
                                             &state.reqwest_client,
                                             &state.registry_path,
@@ -284,14 +359,11 @@ pub async fn serve_crate_file(
                                             state.clean,
                                         )
                                         .await;
-                                    } else {
-                                        // Fallback if we couldn't parse the filename
-                                        if let Err(e) = std::fs::write(&crate_path, &content) {
-                                            tracing::warn!(
-                                                "Failed to cache crate file locally: {}",
-                                                e
-                                            );
-                                        }
+                                    } else if let Err(e) = std::fs::write(&crate_path, &content) {
+                                        tracing::warn!(
+                                            "Failed to cache crate file locally: {}",
+                                            e
+                                        );
                                     }
 
                                     let mut response =
@@ -391,36 +463,8 @@ async fn cache_specific_index_version(
 ) {
     tracing::info!("Caching index entry for {}:{}", crate_name, version);
 
-    let index_path = match crate_name.len() {
-        1 => registry_path.join("index").join("1").join(crate_name),
-        2 => registry_path.join("index").join("2").join(crate_name),
-        3 => registry_path
-            .join("index")
-            .join("3")
-            .join(&crate_name[..1])
-            .join(crate_name),
-        _ => registry_path
-            .join("index")
-            .join(&crate_name[..2])
-            .join(&crate_name[2..4])
-            .join(crate_name),
-    };
-
-    let crates_io_url = match crate_name.len() {
-        1 => format!("https://index.crates.io/1/{}", crate_name),
-        2 => format!("https://index.crates.io/2/{}", crate_name),
-        3 => format!(
-            "https://index.crates.io/3/{}/{}",
-            &crate_name[..1],
-            crate_name
-        ),
-        _ => format!(
-            "https://index.crates.io/{}/{}/{}",
-            &crate_name[..2],
-            &crate_name[2..4],
-            crate_name
-        ),
-    };
+    let index_path = index::get_index_path(registry_path, crate_name);
+    let crates_io_url = index::get_crates_io_index_url(crate_name);
 
     match client.get(&crates_io_url).send().await {
         Ok(response) if response.status().is_success() => {
@@ -480,37 +524,6 @@ async fn cache_specific_index_version(
         }
         Err(e) => {
             tracing::error!("Failed to fetch index for caching: {}", e);
-        }
-    }
-}
-
-fn remove_prior_crate_versions(registry_path: &PathBuf, crate_name: &str, keep_version: &str) {
-    use std::fs;
-
-    if let Ok(entries) = fs::read_dir(registry_path) {
-        for entry in entries.flatten() {
-            let file_name = entry.file_name();
-            let file_name_str = file_name.to_string_lossy();
-
-            if file_name_str.ends_with(".crate")
-                && let Some(stripped) = file_name_str.strip_suffix(".crate")
-                && let Some(dash_pos) = stripped.rfind('-')
-            {
-                let file_crate_name = &stripped[..dash_pos];
-                let file_version = &stripped[dash_pos + 1..];
-
-                if file_crate_name == crate_name && file_version != keep_version {
-                    if let Err(e) = fs::remove_file(entry.path()) {
-                        tracing::warn!("Failed to remove old crate file {}: {}", file_name_str, e);
-                    } else {
-                        tracing::info!(
-                            "Removed old crate file: {} (keeping {})",
-                            file_name_str,
-                            keep_version
-                        );
-                    }
-                }
-            }
         }
     }
 }
