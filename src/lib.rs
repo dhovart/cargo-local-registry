@@ -188,10 +188,11 @@ pub async fn serve_index_generic(
             }
 
             if let Ok(mut cache) = index_cache.write()
-                && let Some(cached) = cache.get_mut(&crate_name) {
-                    cached.last_check = Instant::now();
-                    tracing::debug!("Updated last_check for {}", crate_name);
-                }
+                && let Some(cached) = cache.get_mut(&crate_name)
+            {
+                cached.last_check = Instant::now();
+                tracing::debug!("Updated last_check for {}", crate_name);
+            }
         }
     }
 
@@ -237,9 +238,10 @@ pub async fn serve_index_generic(
                                 tracing::info!("Caching full index for {} locally", crate_name);
 
                                 if let Some(parent) = index_path.parent()
-                                    && let Err(e) = std::fs::create_dir_all(parent) {
-                                        tracing::warn!("Failed to create index directory: {}", e);
-                                    }
+                                    && let Err(e) = std::fs::create_dir_all(parent)
+                                {
+                                    tracing::warn!("Failed to create index directory: {}", e);
+                                }
 
                                 if let Err(e) = std::fs::write(&index_path, &content) {
                                     tracing::warn!("Failed to cache index file locally: {}", e);
@@ -360,10 +362,7 @@ pub async fn serve_crate_file(
                                         )
                                         .await;
                                     } else if let Err(e) = std::fs::write(&crate_path, &content) {
-                                        tracing::warn!(
-                                            "Failed to cache crate file locally: {}",
-                                            e
-                                        );
+                                        tracing::warn!("Failed to cache crate file locally: {}", e);
                                     }
 
                                     let mut response =
