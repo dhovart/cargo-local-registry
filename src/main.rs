@@ -3,11 +3,12 @@ use cargo::core::dependency::DepKind;
 use cargo::core::resolver::Resolve;
 use cargo::core::{Package, SourceId, Workspace};
 use cargo::sources::PathSource;
-use cargo::util::errors::*;
 use cargo::util::GlobalContext;
+use cargo::util::errors::*;
 use cargo_platform::Platform;
 use clap::Parser as _;
 use flate2::write::GzEncoder;
+use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashSet};
 use std::env;
@@ -17,6 +18,21 @@ use std::io::prelude::*;
 use std::path::{self, Path, PathBuf};
 use tar::{Builder, Header};
 use url::Url;
+
+#[derive(Debug)]
+enum FileTask {
+    Copy {
+        src: PathBuf,
+        dst: PathBuf,
+    },
+    CreateArchive {
+        files: Vec<PathBuf>,
+        pkg_root: PathBuf,
+        pkg_name: String,
+        pkg_version: String,
+        dst: PathBuf,
+    },
+}
 
 #[derive(clap::Parser)]
 #[command(version, about)]
@@ -130,8 +146,13 @@ fn real_main(options: Options, config: &mut GlobalContext) -> CargoResult<()> {
 
     sync(Path::new(lockfile), path, &id, &options, config).with_context(|| "failed to sync")?;
 
+    let registry_path = config.cwd().join(path);
+    let registry_url = id.url();
+
     println!(
-        "add this to your .cargo/config somewhere:
+        r#"Local registry created successfully!
+
+To use this registry, add this to your .cargo/config.toml:
 
     [source.crates-io]
     registry = '{}'
@@ -140,11 +161,12 @@ fn real_main(options: Options, config: &mut GlobalContext) -> CargoResult<()> {
     [source.local-registry]
     local-registry = '{}'
 
-",
-        id.url(),
-        config.cwd().join(path).display()
+Note: Source replacement can only be configured via config files,
+not environment variables (per Cargo documentation).
+"#,
+        registry_url,
+        registry_path.display()
     );
-
     Ok(())
 }
 
@@ -159,8 +181,8 @@ fn sync(
     let manifest = lockfile.parent().unwrap().join("Cargo.toml");
     let manifest = env::current_dir().unwrap().join(&manifest);
     let ws = Workspace::new(&manifest, config)?;
-    let (packages, resolve) =
-        cargo::ops::resolve_ws(&ws, /* dry_run */ false).with_context(|| "failed to load pkg lockfile")?;
+    let (packages, resolve) = cargo::ops::resolve_ws(&ws, /* dry_run */ false)
+        .with_context(|| "failed to load pkg lockfile")?;
     packages.get_many(resolve.iter())?;
 
     let hash = cargo::util::hex::short_hash(registry_id);
@@ -169,8 +191,10 @@ fn sync(
 
     let cache = config.registry_cache_path().join(&part);
 
-    let mut added_crates = HashSet::new();
-    let mut added_index = HashSet::new();
+    // Phase 1: Collect all package info and file tasks (single-threaded due to Cargo API)
+    let mut file_tasks = Vec::new();
+    let mut package_metadata = Vec::new();
+
     for id in resolve.iter() {
         if id.source_id().is_git() {
             if !options.git {
@@ -185,33 +209,86 @@ fn sync(
             .with_context(|| "failed to fetch package")?;
         let filename = format!("{}-{}.crate", id.name(), id.version());
         let dst = canonical_local_dst.join(&filename);
+
+        // Create file task
         if id.source_id().is_registry() {
             let src = cache.join(&filename).into_path_unlocked();
-            fs::copy(&src, &dst).with_context(|| {
-                format!("failed to copy `{}` to `{}`", src.display(), dst.display())
-            })?;
+            file_tasks.push(FileTask::Copy {
+                src,
+                dst: dst.clone(),
+            });
         } else {
-            let file = File::create(&dst).unwrap();
-            let gz = GzEncoder::new(file, flate2::Compression::best());
-            let mut ar = Builder::new(gz);
-            ar.mode(tar::HeaderMode::Deterministic);
-            build_ar(&mut ar, pkg, config);
+            let src = PathSource::new(pkg.root(), pkg.package_id().source_id(), config);
+            let files = src
+                .list_files(pkg)?
+                .iter()
+                .map(|f| f.to_path_buf())
+                .collect();
+            file_tasks.push(FileTask::CreateArchive {
+                files,
+                pkg_root: pkg.root().to_path_buf(),
+                pkg_name: pkg.name().to_string(),
+                pkg_version: pkg.version().to_string(),
+                dst: dst.clone(),
+            });
         }
-        added_crates.insert(dst);
 
+        // Store metadata for index creation
         let name = id.name().to_lowercase();
         let index_dir = canonical_local_dst.join("index");
-        let dst = match name.len() {
-            1 => index_dir.join("1").join(name),
-            2 => index_dir.join("2").join(name),
-            3 => index_dir.join("3").join(&name[..1]).join(name),
-            _ => index_dir.join(&name[..2]).join(&name[2..4]).join(name),
+        let index_dst = match name.len() {
+            1 => index_dir.join("1").join(&name),
+            2 => index_dir.join("2").join(&name),
+            3 => index_dir.join("3").join(&name[..1]).join(&name),
+            _ => index_dir.join(&name[..2]).join(&name[2..4]).join(&name),
         };
-        fs::create_dir_all(dst.parent().unwrap())?;
-        let line = serde_json::to_string(&registry_pkg(pkg, &resolve)).unwrap();
 
-        let prev = if options.no_delete || added_index.contains(&dst) {
-            read(&dst).unwrap_or_default()
+        package_metadata.push((
+            dst,
+            index_dst,
+            serde_json::to_string(&registry_pkg(pkg, &resolve)).unwrap(),
+            id.version().to_string(),
+        ));
+    }
+
+    // Phase 2: Execute file tasks in parallel
+    file_tasks
+        .par_iter()
+        .try_for_each(|task| -> Result<(), anyhow::Error> {
+            match task {
+                FileTask::Copy { src, dst } => {
+                    fs::copy(src, dst).with_context(|| {
+                        format!("failed to copy `{}` to `{}`", src.display(), dst.display())
+                    })?;
+                }
+                FileTask::CreateArchive {
+                    files,
+                    pkg_root,
+                    pkg_name,
+                    pkg_version,
+                    dst,
+                } => {
+                    let file = File::create(dst)?;
+                    let gz = GzEncoder::new(file, flate2::Compression::best());
+                    let mut ar = Builder::new(gz);
+                    ar.mode(tar::HeaderMode::Deterministic);
+                    build_ar_from_files(&mut ar, files, pkg_root, pkg_name, pkg_version)?;
+                }
+            }
+            Ok(())
+        })?;
+
+    // Phase 3: Update index files sequentially
+    let mut added_crates = HashSet::new();
+    let mut added_index = HashSet::new();
+
+    for (crate_dst, index_dst, line, version) in package_metadata {
+        added_crates.insert(crate_dst);
+
+        fs::create_dir_all(index_dst.parent().unwrap())?;
+
+        let prev = if options.no_delete || added_index.contains(&index_dst) {
+            read(&index_dst).unwrap_or_default()
         } else {
             // If cleaning old entries (no_delete is not set), don't read the file unless we wrote
             // it in one of the previous iterations.
@@ -219,17 +296,17 @@ fn sync(
         };
         let mut prev_entries = prev
             .lines()
-            .filter(|line| {
-                let pkg: RegistryPackage = serde_json::from_str(line).unwrap();
-                pkg.vers != id.version().to_string()
+            .filter(|entry_line| {
+                let pkg: RegistryPackage = serde_json::from_str(entry_line).unwrap();
+                pkg.vers != version
             })
             .collect::<Vec<_>>();
         prev_entries.push(&line);
         prev_entries.sort();
         let new_contents = prev_entries.join("\n");
 
-        File::create(&dst).and_then(|mut f| f.write_all(new_contents.as_bytes()))?;
-        added_index.insert(dst);
+        File::create(&index_dst).and_then(|mut f| f.write_all(new_contents.as_bytes()))?;
+        added_index.insert(index_dst);
     }
 
     if !options.no_delete {
@@ -275,29 +352,47 @@ fn scan_delete(path: &Path, depth: usize, keep: &HashSet<PathBuf>) -> CargoResul
     Ok(())
 }
 
-fn build_ar(ar: &mut Builder<GzEncoder<File>>, pkg: &Package, config: &GlobalContext) {
-    let root = pkg.root();
-    let src = PathSource::new(pkg.root(), pkg.package_id().source_id(), config);
-    for file in src.list_files(pkg).unwrap().iter() {
-        let relative = file.strip_prefix(root).unwrap();
-        let relative = relative.to_str().unwrap();
-        let mut file = File::open(file.as_ref()).unwrap();
+fn build_ar_from_files(
+    ar: &mut Builder<GzEncoder<File>>,
+    files: &[PathBuf],
+    pkg_root: &Path,
+    pkg_name: &str,
+    pkg_version: &str,
+) -> Result<(), anyhow::Error> {
+    for file_path in files {
+        let relative = file_path
+            .strip_prefix(pkg_root)
+            .with_context(|| format!("failed to strip prefix from {}", file_path.display()))?;
+        let relative_str = relative
+            .to_str()
+            .with_context(|| format!("invalid unicode in path: {}", relative.display()))?;
+
+        let mut file = File::open(file_path)
+            .with_context(|| format!("failed to open file: {}", file_path.display()))?;
+
         let path = format!(
             "{}-{}{}{}",
-            pkg.name(),
-            pkg.version(),
+            pkg_name,
+            pkg_version,
             path::MAIN_SEPARATOR,
-            relative
+            relative_str
         );
 
         let mut header = Header::new_ustar();
-        let metadata = file.metadata().unwrap();
-        header.set_path(&path).unwrap();
+        let metadata = file
+            .metadata()
+            .with_context(|| format!("failed to get metadata for: {}", file_path.display()))?;
+        header
+            .set_path(&path)
+            .with_context(|| format!("failed to set header path: {}", path))?;
         header.set_metadata(&metadata);
         header.set_cksum();
 
-        ar.append(&header, &mut file).unwrap();
+        ar.append(&header, &mut file).with_context(|| {
+            format!("failed to append file to archive: {}", file_path.display())
+        })?;
     }
+    Ok(())
 }
 
 fn registry_pkg(pkg: &Package, resolve: &Resolve) -> RegistryPackage {
