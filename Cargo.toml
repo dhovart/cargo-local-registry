@@ -22,7 +22,7 @@ all = "deny"
 anyhow = "1.0.100"
 cargo = "0.91.0"
 cargo-platform = "0.3.1"
-clap = { version = "4.5.51", features = ["derive"] }
+clap = { version = "4.5.53", features = ["derive"] }
 env_logger = "0.11.8"
 flate2 = "1.1.5"
 openssl = { version = '0.10.74', optional = true }
