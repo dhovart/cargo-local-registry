@@ -77,8 +77,7 @@ enum Command {
     /// Sync the registry with a Cargo.lock file
     Sync {
         /// Path to Cargo.lock file
-        #[arg(short, long)]
-        sync: String,
+        lock: String,
         /// Registry index to sync with
         #[arg(long)]
         host: Option<String>,
@@ -219,7 +218,7 @@ not environment variables (per Cargo documentation).
     } else {
         match options.command {
             Some(Command::Sync {
-                sync,
+                lock,
                 host,
                 git,
                 no_delete,
@@ -229,7 +228,7 @@ not environment variables (per Cargo documentation).
                     None => SourceId::crates_io_maybe_sparse_http(config)?,
                 };
 
-                sync_lockfile(Path::new(&sync), path, &id, git, no_delete, config)
+                sync_lockfile(Path::new(&lock), path, &id, git, no_delete, config)
                     .with_context(|| "failed to sync")?;
 
                 let registry_path = config.cwd().join(path);
