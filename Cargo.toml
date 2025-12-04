@@ -37,3 +37,6 @@ tempfile = "3.23.0"
 
 [features]
 vendored-openssl = ['openssl/vendored']
+
+[badges]  
+maintenance = { status = "passively-maintained" } 
