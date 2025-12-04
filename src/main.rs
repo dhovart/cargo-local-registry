@@ -17,6 +17,7 @@ use std::io;
 use std::io::prelude::*;
 use std::path::{self, Path, PathBuf};
 use tar::{Builder, Header};
+use tempfile::TempDir;
 use url::Url;
 
 #[derive(Debug)]
@@ -37,30 +38,64 @@ enum FileTask {
 #[derive(clap::Parser)]
 #[command(version, about)]
 struct Options {
-    /// Sync the registry with LOCK
+    #[command(subcommand)]
+    command: Option<Command>,
+
+    /// Sync the registry with LOCK (backwards compatibility)
     #[arg(short, long)]
     sync: Option<String>,
     /// Registry index to sync with
-    #[arg(long)]
+    #[arg(long, requires = "sync")]
     host: Option<String>,
     /// Vendor git dependencies as well
-    #[arg(long, default_value_t = false)]
+    #[arg(long, default_value_t = false, requires = "sync")]
     git: bool,
-    /// Use verbose output
-    #[arg(short, long, action = clap::ArgAction::Count)]
-    verbose: u8,
-    /// No output printed to stdout
-    #[arg(short, long, default_value_t = false)]
-    quiet: bool,
-    /// Coloring: auto, always, never
-    #[arg(short, long)]
-    color: Option<String>,
     /// Don't delete older crates in the local registry directory
-    #[arg(long)]
+    #[arg(long, requires = "sync")]
     no_delete: bool,
 
+    /// Use verbose output
+    #[arg(short, long, action = clap::ArgAction::Count, global = true)]
+    verbose: u8,
+    /// No output printed to stdout
+    #[arg(short, long, default_value_t = false, global = true)]
+    quiet: bool,
+    /// Coloring: auto, always, never
+    #[arg(short, long, global = true)]
+    color: Option<String>,
+
     /// Path to the local registry
-    path: String,
+    #[arg(global = true)]
+    path: Option<String>,
+}
+
+#[derive(clap::Subcommand)]
+enum Command {
+    /// Sync the registry with a Cargo.lock file
+    Sync {
+        /// Path to Cargo.lock file
+        lock: String,
+        /// Registry index to sync with
+        #[arg(long)]
+        host: Option<String>,
+        /// Vendor git dependencies as well
+        #[arg(long, default_value_t = false)]
+        git: bool,
+        /// Don't delete older crates in the local registry directory
+        #[arg(long)]
+        no_delete: bool,
+    },
+    /// Add a crate to the registry
+    Add {
+        /// Name of the crate to add
+        crate_name: String,
+        /// Version of the crate to add (defaults to latest)
+        #[arg(long)]
+        version: Option<String>,
+        /// Registry index to fetch from
+        #[arg(long)]
+        host: Option<String>,
+    },
 }
 
 #[derive(Deserialize, Serialize)]
@@ -129,24 +164,88 @@ fn real_main(options: Options, config: &mut GlobalContext) -> CargoResult<()> {
         /* cli_config = */ &[],
     )?;
 
-    let path = Path::new(&options.path);
+    let path_str = options.path.as_deref().unwrap_or(".");
+    let path = Path::new(path_str);
     let index = path.join("index");
 
     fs::create_dir_all(&index)
         .with_context(|| format!("failed to create index: `{}`", index.display()))?;
-    let id = match options.host {
-        Some(ref s) => SourceId::for_registry(&Url::parse(s)?)?,
+
+    // Handle backwards compatibility: --sync flag or sync subcommand
+    if let Some(sync_path) = options.sync {
+        handle_sync(
+            &sync_path,
+            path,
+            options.host.as_ref(),
+            options.git,
+            options.no_delete,
+            config,
+        )?;
+    } else {
+        match options.command {
+            Some(Command::Sync {
+                lock,
+                host,
+                git,
+                no_delete,
+            }) => {
+                handle_sync(&lock, path, host.as_ref(), git, no_delete, config)?;
+            }
+            Some(Command::Add {
+                crate_name,
+                version,
+                host,
+            }) => {
+                let id = match host {
+                    Some(ref s) => SourceId::for_registry(&Url::parse(s)?)?,
+                    None => SourceId::crates_io_maybe_sparse_http(config)?,
+                };
+
+                add_crate(&crate_name, version.as_deref(), path, &id, config).with_context(
+                    || format!("failed to add crate `{}` with dependencies", crate_name),
+                )?;
+
+                let registry_path = config.cwd().join(path);
+                config.shell().note(format!(
+                    "Successfully added {} to local registry at {}",
+                    crate_name,
+                    registry_path.display()
+                ))?;
+            }
+            None => {
+                // No command provided and no --sync flag, just create the index directory
+                return Ok(());
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn handle_sync(
+    lockfile_path: &str,
+    registry_path: &Path,
+    host: Option<&String>,
+    git: bool,
+    no_delete: bool,
+    config: &GlobalContext,
+) -> CargoResult<()> {
+    let id = match host {
+        Some(s) => SourceId::for_registry(&Url::parse(s)?)?,
         None => SourceId::crates_io_maybe_sparse_http(config)?,
     };
 
-    let lockfile = match options.sync {
-        Some(ref file) => file,
-        None => return Ok(()),
-    };
+    sync_lockfile(
+        Path::new(lockfile_path),
+        registry_path,
+        &id,
+        git,
+        no_delete,
+        config,
+    )
+    .with_context(|| "failed to sync")?;
 
-    sync(Path::new(lockfile), path, &id, &options, config).with_context(|| "failed to sync")?;
-
-    let registry_path = config.cwd().join(path);
+    let full_registry_path = config.cwd().join(registry_path);
     let registry_url = id.url();
 
     println!(
@@ -165,16 +264,80 @@ Note: Source replacement can only be configured via config files,
 not environment variables (per Cargo documentation).
 "#,
         registry_url,
-        registry_path.display()
+        full_registry_path.display()
     );
+
     Ok(())
 }
 
-fn sync(
+fn add_crate(
+    crate_name: &str,
+    version: Option<&str>,
+    local_dst: &Path,
+    registry_id: &SourceId,
+    config: &GlobalContext,
+) -> CargoResult<()> {
+    // Create a temporary workspace with a Cargo.toml that depends on the requested crate
+    let temp_dir = TempDir::new()?;
+    let manifest_path = temp_dir.path().join("Cargo.toml");
+
+    let dep_spec = if let Some(ver) = version {
+        let version_spec = if ver.starts_with('^')
+            || ver.starts_with('~')
+            || ver.starts_with('=')
+            || ver.starts_with('>')
+            || ver.starts_with('<')
+            || ver.starts_with('*')
+        {
+            ver.to_string()
+        } else {
+            format!("={}", ver)
+        };
+        format!("{} = \"{}\"", crate_name, version_spec)
+    } else {
+        format!("{} = \"*\"", crate_name)
+    };
+
+    let manifest_content = format!(
+        r#"[package]
+name = "temp"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+{}
+"#,
+        dep_spec
+    );
+
+    fs::write(&manifest_path, manifest_content)?;
+
+    // Create a minimal src/lib.rs so Cargo doesn't complain
+    let src_dir = temp_dir.path().join("src");
+    fs::create_dir(&src_dir)?;
+    fs::write(src_dir.join("lib.rs"), "")?;
+
+    let original_dir = env::current_dir()?;
+    env::set_current_dir(temp_dir.path())?;
+
+    let ws = Workspace::new(&manifest_path, config)?;
+    let _result = cargo::ops::resolve_ws(&ws, false)?;
+
+    env::set_current_dir(&original_dir)?;
+
+    let lockfile_path = temp_dir.path().join("Cargo.lock");
+
+    sync_lockfile(&lockfile_path, local_dst, registry_id, false, true, config)?;
+
+    Ok(())
+}
+
+fn sync_lockfile(
     lockfile: &Path,
     local_dst: &Path,
     registry_id: &SourceId,
-    options: &Options,
+    git: bool,
+    no_delete: bool,
     config: &GlobalContext,
 ) -> CargoResult<()> {
     let canonical_local_dst = local_dst.canonicalize().unwrap_or(local_dst.to_path_buf());
@@ -185,11 +348,7 @@ fn sync(
         .with_context(|| "failed to load pkg lockfile")?;
     packages.get_many(resolve.iter())?;
 
-    let hash = cargo::util::hex::short_hash(registry_id);
-    let ident = registry_id.url().host().unwrap().to_string();
-    let part = format!("{}-{}", ident, hash);
-
-    let cache = config.registry_cache_path().join(&part);
+    let cache = get_cache_path(registry_id, config);
 
     // Phase 1: Collect all package info and file tasks (single-threaded due to Cargo API)
     let mut file_tasks = Vec::new();
@@ -197,7 +356,7 @@ fn sync(
 
     for id in resolve.iter() {
         if id.source_id().is_git() {
-            if !options.git {
+            if !git {
                 continue;
             }
         } else if !id.source_id().is_registry() {
@@ -212,7 +371,7 @@ fn sync(
 
         // Create file task
         if id.source_id().is_registry() {
-            let src = cache.join(&filename).into_path_unlocked();
+            let src = cache.join(&filename);
             file_tasks.push(FileTask::Copy {
                 src,
                 dst: dst.clone(),
@@ -234,14 +393,7 @@ fn sync(
         }
 
         // Store metadata for index creation
-        let name = id.name().to_lowercase();
-        let index_dir = canonical_local_dst.join("index");
-        let index_dst = match name.len() {
-            1 => index_dir.join("1").join(&name),
-            2 => index_dir.join("2").join(&name),
-            3 => index_dir.join("3").join(&name[..1]).join(&name),
-            _ => index_dir.join(&name[..2]).join(&name[2..4]).join(&name),
-        };
+        let index_dst = get_index_path(id.name().as_str(), &canonical_local_dst);
 
         package_metadata.push((
             dst,
@@ -285,31 +437,14 @@ fn sync(
     for (crate_dst, index_dst, line, version) in package_metadata {
         added_crates.insert(crate_dst);
 
-        fs::create_dir_all(index_dst.parent().unwrap())?;
+        // Keep old versions if no_delete is set OR if we already updated this index file in this run
+        let keep_old = no_delete || added_index.contains(&index_dst);
+        update_index_entry(&index_dst, &line, &version, keep_old)?;
 
-        let prev = if options.no_delete || added_index.contains(&index_dst) {
-            read(&index_dst).unwrap_or_default()
-        } else {
-            // If cleaning old entries (no_delete is not set), don't read the file unless we wrote
-            // it in one of the previous iterations.
-            String::new()
-        };
-        let mut prev_entries = prev
-            .lines()
-            .filter(|entry_line| {
-                let pkg: RegistryPackage = serde_json::from_str(entry_line).unwrap();
-                pkg.vers != version
-            })
-            .collect::<Vec<_>>();
-        prev_entries.push(&line);
-        prev_entries.sort();
-        let new_contents = prev_entries.join("\n");
-
-        File::create(&index_dst).and_then(|mut f| f.write_all(new_contents.as_bytes()))?;
         added_index.insert(index_dst);
     }
 
-    if !options.no_delete {
+    if !no_delete {
         let existing_crates: Vec<PathBuf> = canonical_local_dst
             .read_dir()
             .map(|iter| {
@@ -451,6 +586,56 @@ fn registry_pkg(pkg: &Package, resolve: &Resolve) -> RegistryPackage {
             .unwrap_or_default(),
         yanked: Some(false),
     }
+}
+
+fn get_cache_path(registry_id: &SourceId, config: &GlobalContext) -> PathBuf {
+    let hash = cargo::util::hex::short_hash(registry_id);
+    let ident = registry_id.url().host().unwrap().to_string();
+    let part = format!("{}-{}", ident, hash);
+    config
+        .registry_cache_path()
+        .join(&part)
+        .into_path_unlocked()
+}
+
+fn get_index_path(crate_name: &str, local_dst: &Path) -> PathBuf {
+    let name = crate_name.to_lowercase();
+    let index_dir = local_dst.join("index");
+    match name.len() {
+        1 => index_dir.join("1").join(&name),
+        2 => index_dir.join("2").join(&name),
+        3 => index_dir.join("3").join(&name[..1]).join(&name),
+        _ => index_dir.join(&name[..2]).join(&name[2..4]).join(&name),
+    }
+}
+
+fn update_index_entry(
+    index_path: &Path,
+    registry_package_json: &str,
+    version: &str,
+    keep_old_versions: bool,
+) -> CargoResult<()> {
+    fs::create_dir_all(index_path.parent().unwrap())?;
+
+    let prev = if keep_old_versions {
+        read(index_path).unwrap_or_default()
+    } else {
+        String::new()
+    };
+
+    let mut prev_entries = prev
+        .lines()
+        .filter(|entry_line| {
+            let pkg: RegistryPackage = serde_json::from_str(entry_line).unwrap();
+            pkg.vers != version
+        })
+        .collect::<Vec<_>>();
+    prev_entries.push(registry_package_json);
+    prev_entries.sort();
+    let new_contents = prev_entries.join("\n");
+
+    File::create(index_path).and_then(|mut f| f.write_all(new_contents.as_bytes()))?;
+    Ok(())
 }
 
 fn read(path: &Path) -> CargoResult<String> {

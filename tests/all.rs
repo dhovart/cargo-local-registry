@@ -672,6 +672,299 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
     );
 }
 
+#[test]
+fn add_command_latest() {
+    let _l = lock();
+    let td = TempDir::new().unwrap();
+    let registry = td.path().join("registry");
+
+    // Add latest version of a crate
+    run(cmd()
+        .arg("add")
+        .arg("serde")
+        .arg(&registry));
+
+    // Verify crate file exists
+    let crate_files: Vec<_> = registry
+        .read_dir()
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| {
+            e.file_name()
+                .to_str()
+                .is_some_and(|name| name.starts_with("serde-") && name.ends_with(".crate"))
+        })
+        .collect();
+    assert_eq!(
+        crate_files.len(),
+        1,
+        "Expected exactly one serde crate file"
+    );
+
+    // Verify dependencies are also added
+    let all_crates: Vec<_> = registry
+        .read_dir()
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| {
+            e.file_name()
+                .to_str()
+                .is_some_and(|name| name.ends_with(".crate"))
+        })
+        .collect();
+    assert!(
+        all_crates.len() > 1,
+        "Expected serde and its dependencies"
+    );
+
+    // Verify index entry exists
+    assert!(registry.join("index/se/rd/serde").is_file());
+
+    // Verify index content is valid JSON
+    let mut contents = String::new();
+    File::open(registry.join("index/se/rd/serde"))
+        .unwrap()
+        .read_to_string(&mut contents)
+        .unwrap();
+
+    assert_eq!(contents.lines().count(), 1);
+    let entry: serde_json::Value = serde_json::from_str(contents.lines().next().unwrap()).unwrap();
+    assert_eq!(entry["name"], "serde");
+    assert!(entry["vers"].as_str().unwrap().len() > 0);
+    assert!(entry["cksum"].as_str().unwrap().len() > 0);
+}
+
+#[test]
+fn add_command_specific_version() {
+    let _l = lock();
+    let td = TempDir::new().unwrap();
+    let registry = td.path().join("registry");
+
+    // Add specific version
+    run(cmd()
+        .arg("add")
+        .arg("libc")
+        .arg("--version")
+        .arg("0.2.100")
+        .arg(&registry));
+
+    // Verify correct version was added
+    assert!(registry.join("libc-0.2.100.crate").is_file());
+    assert!(registry.join("index/li/bc/libc").is_file());
+
+    let mut contents = String::new();
+    File::open(registry.join("index/li/bc/libc"))
+        .unwrap()
+        .read_to_string(&mut contents)
+        .unwrap();
+
+    assert!(contents.contains("0.2.100"));
+}
+
+#[test]
+fn add_command_version_requirement() {
+    let _l = lock();
+    let td = TempDir::new().unwrap();
+    let registry = td.path().join("registry");
+
+    // Add using a caret version requirement
+    run(cmd()
+        .arg("add")
+        .arg("sct")
+        .arg("--version")
+        .arg("^0.7")
+        .arg(&registry));
+
+    // Verify a version matching ^0.7 was added (should be 0.7.x)
+    let crate_files: Vec<_> = registry
+        .read_dir()
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter_map(|e| e.file_name().into_string().ok())
+        .filter(|name| name.starts_with("sct-0.7.") && name.ends_with(".crate"))
+        .collect();
+
+    assert!(!crate_files.is_empty(), "Expected sct-0.7.x crate file");
+    assert!(registry.join("index/3/s/sct").is_file());
+
+    let mut contents = String::new();
+    File::open(registry.join("index/3/s/sct"))
+        .unwrap()
+        .read_to_string(&mut contents)
+        .unwrap();
+
+    // Verify version is 0.7.x
+    assert!(contents.contains("\"vers\":\"0.7."));
+}
+
+#[test]
+fn add_command_multiple_crates() {
+    let _l = lock();
+    let td = TempDir::new().unwrap();
+    let registry = td.path().join("registry");
+
+    // Add multiple crates
+    run(cmd()
+        .arg("add")
+        .arg("anyhow")
+        .arg(&registry));
+    run(cmd()
+        .arg("add")
+        .arg("serde")
+        .arg(&registry));
+    run(cmd().arg("add").arg("libc").arg(&registry));
+
+    // Verify all crates exist
+    let files: Vec<_> = registry
+        .read_dir()
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter_map(|e| e.file_name().into_string().ok())
+        .collect();
+
+    assert!(files.iter().any(|n| n.starts_with("anyhow-")));
+    assert!(files.iter().any(|n| n.starts_with("serde-")));
+    assert!(files.iter().any(|n| n.starts_with("libc-")));
+
+    // Verify index files
+    assert!(registry.join("index/an/yh/anyhow").is_file());
+    assert!(registry.join("index/se/rd/serde").is_file());
+    assert!(registry.join("index/li/bc/libc").is_file());
+}
+
+#[test]
+fn add_command_multiple_versions_same_crate() {
+    let _l = lock();
+    let td = TempDir::new().unwrap();
+    let registry = td.path().join("registry");
+
+    // Add a specific version first
+    run(cmd()
+        .arg("add")
+        .arg("libc")
+        .arg("--version")
+        .arg("0.2.100")
+        .arg(&registry));
+
+    // Add a different version of the same crate
+    run(cmd()
+        .arg("add")
+        .arg("libc")
+        .arg("--version")
+        .arg("0.2.101")
+        .arg(&registry));
+
+    // Both versions should exist (not replaced)
+    assert!(registry.join("libc-0.2.100.crate").is_file());
+    assert!(registry.join("libc-0.2.101.crate").is_file());
+
+    // Index should have both versions
+    let mut contents = String::new();
+    File::open(registry.join("index/li/bc/libc"))
+        .unwrap()
+        .read_to_string(&mut contents)
+        .unwrap();
+
+    assert_eq!(contents.lines().count(), 2);
+    assert!(contents.contains("0.2.100"));
+    assert!(contents.contains("0.2.101"));
+}
+
+#[test]
+fn add_command_yanked_version() {
+    let _l = lock();
+    let td = TempDir::new().unwrap();
+    let registry = td.path().join("registry");
+
+    // Try to add a yanked version explicitly
+    // rustc-serialize 0.3.24 is yanked
+    run(cmd()
+        .arg("add")
+        .arg("rustc-serialize")
+        .arg("--version")
+        .arg("0.3.24")
+        .arg(&registry));
+
+    // Should still be able to add it when explicitly requested
+    assert!(registry.join("rustc-serialize-0.3.24.crate").is_file());
+
+    let mut contents = String::new();
+    File::open(registry.join("index/ru/st/rustc-serialize"))
+        .unwrap()
+        .read_to_string(&mut contents)
+        .unwrap();
+
+    // Verify the yanked version was added
+    assert!(contents.contains("0.3.24"));
+}
+
+#[test]
+fn add_command_latest_skips_yanked() {
+    let _l = lock();
+    let td = TempDir::new().unwrap();
+    let registry = td.path().join("registry");
+
+    // Add latest version (should skip yanked versions)
+    // We'll use a crate where we know the latest isn't yanked
+    run(cmd()
+        .arg("add")
+        .arg("serde")
+        .arg(&registry));
+
+    // Read the version that was added
+    let mut contents = String::new();
+    File::open(registry.join("index/se/rd/serde"))
+        .unwrap()
+        .read_to_string(&mut contents)
+        .unwrap();
+
+    let entry: serde_json::Value = serde_json::from_str(contents.lines().next().unwrap()).unwrap();
+
+    // The version should not be yanked
+    assert_eq!(
+        entry["yanked"], false,
+        "Latest version should not be yanked"
+    );
+}
+
+#[test]
+fn add_command_with_deps() {
+    let _l = lock();
+    let td = TempDir::new().unwrap();
+    let registry = td.path().join("registry");
+
+    // Add a crate with known dependencies.
+    // `tiny_http@0.11.0` depends on `ascii` and `log`.
+    run(cmd()
+        .arg("add")
+        .arg("tiny_http")
+        .arg("--version")
+        .arg("0.11.0")
+        .arg(&registry));
+
+    // Verify that tiny_http and its dependencies are present.
+    assert!(registry.join("tiny_http-0.11.0.crate").is_file());
+    assert!(registry.join("index/ti/ny/tiny_http").is_file());
+
+    // Check for a dependency, e.g., `log`. `tiny_http` depends on `log`.
+    // We can't know the exact version of log, so we check for the directory.
+    let log_crates: Vec<_> = registry
+        .read_dir()
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| {
+            e.file_name()
+                .to_str()
+                .is_some_and(|name| name.starts_with("log-") && name.ends_with(".crate"))
+        })
+        .collect();
+    assert!(log_crates.len() >= 1, "Expected at least one log crate file");
+
+    // Check if log index exists (3-letter crates go in 3/x/xxx/)
+    let log_index = registry.join("index/3/l/log");
+    assert!(log_index.is_file(), "Expected log index at {:?}", log_index);
+}
+
 fn run(cmd: &mut Command) -> String {
     let output = cmd.env("RUST_BACKTRACE", "1").output().unwrap();
     if !output.status.success() {
