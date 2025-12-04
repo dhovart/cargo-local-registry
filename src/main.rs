@@ -173,42 +173,14 @@ fn real_main(options: Options, config: &mut GlobalContext) -> CargoResult<()> {
 
     // Handle backwards compatibility: --sync flag or sync subcommand
     if let Some(sync_path) = options.sync {
-        let id = match options.host {
-            Some(ref s) => SourceId::for_registry(&Url::parse(s)?)?,
-            None => SourceId::crates_io_maybe_sparse_http(config)?,
-        };
-
-        sync_lockfile(
-            Path::new(&sync_path),
+        handle_sync(
+            &sync_path,
             path,
-            &id,
+            options.host.as_ref(),
             options.git,
             options.no_delete,
             config,
-        )
-        .with_context(|| "failed to sync")?;
-
-        let registry_path = config.cwd().join(path);
-        let registry_url = id.url();
-
-        println!(
-            r#"Local registry created successfully!
-
-To use this registry, add this to your .cargo/config.toml:
-
-    [source.crates-io]
-    registry = '{}'
-    replace-with = 'local-registry'
-
-    [source.local-registry]
-    local-registry = '{}'
-
-Note: Source replacement can only be configured via config files,
-not environment variables (per Cargo documentation).
-"#,
-            registry_url,
-            registry_path.display()
-        );
+        )?;
     } else {
         match options.command {
             Some(Command::Sync {
@@ -217,35 +189,7 @@ not environment variables (per Cargo documentation).
                 git,
                 no_delete,
             }) => {
-                let id = match host {
-                    Some(ref s) => SourceId::for_registry(&Url::parse(s)?)?,
-                    None => SourceId::crates_io_maybe_sparse_http(config)?,
-                };
-
-                sync_lockfile(Path::new(&lock), path, &id, git, no_delete, config)
-                    .with_context(|| "failed to sync")?;
-
-                let registry_path = config.cwd().join(path);
-                let registry_url = id.url();
-
-                println!(
-                    r#"Local registry created successfully!
-
-To use this registry, add this to your .cargo/config.toml:
-
-    [source.crates-io]
-    registry = '{}'
-    replace-with = 'local-registry'
-
-    [source.local-registry]
-    local-registry = '{}'
-
-Note: Source replacement can only be configured via config files,
-not environment variables (per Cargo documentation).
-"#,
-                    registry_url,
-                    registry_path.display()
-                );
+                handle_sync(&lock, path, host.as_ref(), git, no_delete, config)?;
             }
             Some(Command::Add {
                 crate_name,
@@ -274,6 +218,54 @@ not environment variables (per Cargo documentation).
             }
         }
     }
+
+    Ok(())
+}
+
+fn handle_sync(
+    lockfile_path: &str,
+    registry_path: &Path,
+    host: Option<&String>,
+    git: bool,
+    no_delete: bool,
+    config: &GlobalContext,
+) -> CargoResult<()> {
+    let id = match host {
+        Some(s) => SourceId::for_registry(&Url::parse(s)?)?,
+        None => SourceId::crates_io_maybe_sparse_http(config)?,
+    };
+
+    sync_lockfile(
+        Path::new(lockfile_path),
+        registry_path,
+        &id,
+        git,
+        no_delete,
+        config,
+    )
+    .with_context(|| "failed to sync")?;
+
+    let full_registry_path = config.cwd().join(registry_path);
+    let registry_url = id.url();
+
+    println!(
+        r#"Local registry created successfully!
+
+To use this registry, add this to your .cargo/config.toml:
+
+    [source.crates-io]
+    registry = '{}'
+    replace-with = 'local-registry'
+
+    [source.local-registry]
+    local-registry = '{}'
+
+Note: Source replacement can only be configured via config files,
+not environment variables (per Cargo documentation).
+"#,
+        registry_url,
+        full_registry_path.display()
+    );
 
     Ok(())
 }
