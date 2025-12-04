@@ -679,7 +679,11 @@ fn add_command_latest() {
     let registry = td.path().join("registry");
 
     // Add latest version of a crate
-    run(cmd().arg("add").arg("serde").arg(&registry));
+    run(cmd()
+        .arg("add")
+        .arg("serde")
+        .arg("--no-deps")
+        .arg(&registry));
 
     // Verify crate file exists
     let crate_files: Vec<_> = registry
@@ -692,7 +696,11 @@ fn add_command_latest() {
                 .is_some_and(|name| name.starts_with("serde-") && name.ends_with(".crate"))
         })
         .collect();
-    assert_eq!(crate_files.len(), 1, "Expected exactly one serde crate file");
+    assert_eq!(
+        crate_files.len(),
+        1,
+        "Expected exactly one serde crate file"
+    );
 
     // Verify index entry exists
     assert!(registry.join("index/se/rd/serde").is_file());
@@ -723,6 +731,7 @@ fn add_command_specific_version() {
         .arg("libc")
         .arg("--version")
         .arg("0.2.100")
+        .arg("--no-deps")
         .arg(&registry));
 
     // Verify correct version was added
@@ -745,9 +754,17 @@ fn add_command_multiple_crates() {
     let registry = td.path().join("registry");
 
     // Add multiple crates
-    run(cmd().arg("add").arg("anyhow").arg(&registry));
-    run(cmd().arg("add").arg("serde").arg(&registry));
-    run(cmd().arg("add").arg("libc").arg(&registry));
+    run(cmd()
+        .arg("add")
+        .arg("anyhow")
+        .arg("--no-deps")
+        .arg(&registry));
+    run(cmd()
+        .arg("add")
+        .arg("serde")
+        .arg("--no-deps")
+        .arg(&registry));
+    run(cmd().arg("add").arg("libc").arg("--no-deps").arg(&registry));
 
     // Verify all crates exist
     let files: Vec<_> = registry
@@ -779,6 +796,7 @@ fn add_command_multiple_versions_same_crate() {
         .arg("libc")
         .arg("--version")
         .arg("0.2.100")
+        .arg("--no-deps")
         .arg(&registry));
 
     // Add a different version of the same crate
@@ -787,6 +805,7 @@ fn add_command_multiple_versions_same_crate() {
         .arg("libc")
         .arg("--version")
         .arg("0.2.101")
+        .arg("--no-deps")
         .arg(&registry));
 
     // Both versions should exist (not replaced)
@@ -818,6 +837,7 @@ fn add_command_yanked_version() {
         .arg("rustc-serialize")
         .arg("--version")
         .arg("0.3.24")
+        .arg("--no-deps")
         .arg(&registry));
 
     // Should still be able to add it when explicitly requested
@@ -841,7 +861,11 @@ fn add_command_latest_skips_yanked() {
 
     // Add latest version (should skip yanked versions)
     // We'll use a crate where we know the latest isn't yanked
-    run(cmd().arg("add").arg("serde").arg(&registry));
+    run(cmd()
+        .arg("add")
+        .arg("serde")
+        .arg("--no-deps")
+        .arg(&registry));
 
     // Read the version that was added
     let mut contents = String::new();
@@ -853,7 +877,80 @@ fn add_command_latest_skips_yanked() {
     let entry: serde_json::Value = serde_json::from_str(contents.lines().next().unwrap()).unwrap();
 
     // The version should not be yanked
-    assert_eq!(entry["yanked"], false, "Latest version should not be yanked");
+    assert_eq!(
+        entry["yanked"], false,
+        "Latest version should not be yanked"
+    );
+}
+
+#[test]
+fn add_command_with_deps() {
+    let _l = lock();
+    let td = TempDir::new().unwrap();
+    let registry = td.path().join("registry");
+
+    // Add a crate with known dependencies.
+    // `tiny_http@0.11.0` depends on `ascii` and `log`.
+    run(cmd()
+        .arg("add")
+        .arg("tiny_http")
+        .arg("--version")
+        .arg("0.11.0")
+        .arg(&registry));
+
+    // Verify that tiny_http and its dependencies are present.
+    assert!(registry.join("tiny_http-0.11.0.crate").is_file());
+    assert!(registry.join("index/ti/ny/tiny_http").is_file());
+
+    // Check for a dependency, e.g., `log`. `tiny_http` depends on `log`.
+    // We can't know the exact version of log, so we check for the directory.
+    let log_crates: Vec<_> = registry
+        .read_dir()
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| {
+            e.file_name()
+                .to_str()
+                .is_some_and(|name| name.starts_with("log-") && name.ends_with(".crate"))
+        })
+        .collect();
+    assert_eq!(log_crates.len(), 1, "Expected exactly one log crate file");
+    assert!(registry.join("index/lo/g/log").is_file());
+}
+
+#[test]
+fn add_command_no_deps() {
+    let _l = lock();
+    let td = TempDir::new().unwrap();
+    let registry = td.path().join("registry");
+
+    // Add a crate with known dependencies, but with --no-deps.
+    // `tiny_http@0.11.0` depends on `ascii` and `log`.
+    run(cmd()
+        .arg("add")
+        .arg("tiny_http")
+        .arg("--version")
+        .arg("0.11.0")
+        .arg("--no-deps")
+        .arg(&registry));
+
+    // Verify that tiny_http is present.
+    assert!(registry.join("tiny_http-0.11.0.crate").is_file());
+    assert!(registry.join("index/ti/ny/tiny_http").is_file());
+
+    // Verify that dependencies are NOT present.
+    let log_crates: Vec<_> = registry
+        .read_dir()
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| {
+            e.file_name()
+                .to_str()
+                .is_some_and(|name| name.starts_with("log-") && name.ends_with(".crate"))
+        })
+        .collect();
+    assert_eq!(log_crates.len(), 0, "Expected no log crate files");
+    assert!(!registry.join("index/lo/g/log").exists());
 }
 
 fn run(cmd: &mut Command) -> String {
