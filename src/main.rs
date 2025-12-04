@@ -1,18 +1,14 @@
 use anyhow::Context as _;
-use cargo::core::Dependency;
 use cargo::core::dependency::DepKind;
 use cargo::core::resolver::Resolve;
-use cargo::core::{Package, PackageId, SourceId, Workspace};
+use cargo::core::{Package, SourceId, Workspace};
 use cargo::sources::PathSource;
-use cargo::sources::registry::{IndexSummary, RegistrySource};
-use cargo::sources::source::{QueryKind, Source};
 use cargo::util::GlobalContext;
 use cargo::util::errors::*;
 use cargo_platform::Platform;
 use clap::Parser as _;
 use flate2::write::GzEncoder;
 use rayon::prelude::*;
-use semver::{Version, VersionReq};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashSet};
 use std::env;
@@ -21,6 +17,7 @@ use std::io;
 use std::io::prelude::*;
 use std::path::{self, Path, PathBuf};
 use tar::{Builder, Header};
+use tempfile::TempDir;
 use url::Url;
 
 #[derive(Debug)]
@@ -98,9 +95,6 @@ enum Command {
         /// Registry index to fetch from
         #[arg(long)]
         host: Option<String>,
-        /// Disable recursively adding all dependencies
-        #[arg(long)]
-        no_deps: bool,
     },
 }
 
@@ -257,22 +251,15 @@ not environment variables (per Cargo documentation).
                 crate_name,
                 version,
                 host,
-                no_deps,
             }) => {
                 let id = match host {
                     Some(ref s) => SourceId::for_registry(&Url::parse(s)?)?,
                     None => SourceId::crates_io_maybe_sparse_http(config)?,
                 };
 
-                if no_deps {
-                    add_crate(&crate_name, version.as_deref(), path, &id, config)
-                        .with_context(|| format!("failed to add crate `{}`", crate_name))?;
-                } else {
-                    add_crate_with_deps(&crate_name, version.as_deref(), path, &id, config)
-                        .with_context(|| {
-                            format!("failed to add crate `{}` with dependencies", crate_name)
-                        })?;
-                }
+                add_crate(&crate_name, version.as_deref(), path, &id, config).with_context(
+                    || format!("failed to add crate `{}` with dependencies", crate_name),
+                )?;
 
                 let registry_path = config.cwd().join(path);
                 config.shell().note(format!(
@@ -291,69 +278,6 @@ not environment variables (per Cargo documentation).
     Ok(())
 }
 
-fn add_crate_with_deps(
-    crate_name: &str,
-    version: Option<&str>,
-    local_dst: &Path,
-    registry_id: &SourceId,
-    config: &GlobalContext,
-) -> CargoResult<()> {
-    use std::collections::{HashSet, VecDeque};
-
-    let mut to_process = VecDeque::new();
-    let mut processed = HashSet::new();
-
-    to_process.push_back((crate_name.to_string(), version.map(String::from)));
-
-    while let Some((current_crate, current_version)) = to_process.pop_front() {
-        let key = format!(
-            "{}@{}",
-            current_crate,
-            current_version.as_deref().unwrap_or("*")
-        );
-        if processed.contains(&key) {
-            continue;
-        }
-
-        config.shell().status(
-            "Adding",
-            &format!(
-                "{} {}",
-                current_crate,
-                current_version.as_deref().unwrap_or("*")
-            ),
-        )?;
-
-        let deps = add_crate_internal(
-            &current_crate,
-            current_version.as_deref(),
-            local_dst,
-            registry_id,
-            config,
-        )?;
-
-        processed.insert(key);
-
-        for dep in deps {
-            // Only process registry dependencies (skip dev/build deps for now)
-            if dep.kind.is_none() || dep.kind.as_deref() == Some("normal") {
-                let dep_key = format!("{}@{}", dep.name, dep.req);
-                if !processed.contains(&dep_key) {
-                    let real_name = dep.package.as_deref().unwrap_or(&dep.name);
-                    to_process.push_back((real_name.to_string(), Some(dep.req)));
-                }
-            }
-        }
-    }
-
-    config.shell().status(
-        "Completed",
-        format!("Added {} crate(s) with dependencies", processed.len()),
-    )?;
-
-    Ok(())
-}
-
 fn add_crate(
     crate_name: &str,
     version: Option<&str>,
@@ -361,150 +285,59 @@ fn add_crate(
     registry_id: &SourceId,
     config: &GlobalContext,
 ) -> CargoResult<()> {
-    add_crate_internal(crate_name, version, local_dst, registry_id, config)?;
-    Ok(())
-}
+    // Create a temporary workspace with a Cargo.toml that depends on the requested crate
+    let temp_dir = TempDir::new()?;
+    let manifest_path = temp_dir.path().join("Cargo.toml");
 
-fn add_crate_internal(
-    crate_name: &str,
-    version: Option<&str>,
-    local_dst: &Path,
-    registry_id: &SourceId,
-    config: &GlobalContext,
-) -> CargoResult<Vec<RegistryDependency>> {
-    let canonical_local_dst = local_dst.canonicalize().unwrap_or(local_dst.to_path_buf());
-
-    let _lock = config
-        .acquire_package_cache_lock(cargo::util::cache_lock::CacheLockMode::DownloadExclusive)?;
-
-    let mut source = RegistrySource::remote(*registry_id, &HashSet::new(), config)?;
-    source.block_until_ready()?;
-    let version_req = version.unwrap_or("*");
-    let dep = Dependency::parse(crate_name, Some(version_req), *registry_id)?;
-
-    let mut summaries = Vec::new();
-    // FIXME: for some crates, for instance phf and version '^0.13' this returns an empty summary list
-    // Even though 0.13.1 exists (but 0.13.0 was yanked)
-    // I've tried a fallback mechanism to query for QueryKind::RejectedVersions (to eventually
-    // whitelist them) but the list was also empty
-    let _ = source.query(&dep, QueryKind::Exact, &mut |summary| {
-        summaries.push(summary);
-    })?;
-
-    if summaries.is_empty() {
-        anyhow::bail!(
-            "No crate found with name `{}` and version `{}`",
-            crate_name,
-            version_req
-        );
-    }
-
-    let candidates: Vec<_> = summaries
-        .iter()
-        .filter_map(|s| match s {
-            IndexSummary::Candidate(sum) => Some(sum.to_owned()),
-            _ => None,
-        })
-        .collect();
-
-    // First, try to find an exact version match
-    let maybe_exact = if let Some(ver_str) = version {
-        if ver_str.chars().all(|c| c.is_ascii_digit() || c == '.') {
-            let requested_version = Version::parse(ver_str).expect("invalid literal version");
-            candidates
-                .iter()
-                .find(|sum| sum.version() == &requested_version)
-                .cloned()
+    let dep_spec = if let Some(ver) = version {
+        let version_spec = if ver.starts_with('^')
+            || ver.starts_with('~')
+            || ver.starts_with('=')
+            || ver.starts_with('>')
+            || ver.starts_with('<')
+            || ver.starts_with('*')
+        {
+            ver.to_string()
         } else {
-            None
-        }
+            format!("={}", ver)
+        };
+        format!("{} = \"{}\"", crate_name, version_spec)
     } else {
-        None
+        format!("{} = \"*\"", crate_name)
     };
 
-    let version_req = VersionReq::parse(version_req)?;
+    let manifest_content = format!(
+        r#"[package]
+name = "temp"
+version = "0.1.0"
+edition = "2021"
 
-    // If no exact match, pick the highest version matching the version requirement
-    let summary = maybe_exact.unwrap_or_else(|| {
-        candidates
-            .into_iter()
-            .filter(|sum| version_req.matches(sum.version()))
-            .max_by(|a, b| a.version().cmp(b.version()))
-            .unwrap_or_else(|| panic!("No crate found for `{}` matching any version", crate_name))
-    });
-
-    let checksum = summary.checksum();
-    let pkg_id = summary.package_id();
-    let maybe_pkg = source.download(pkg_id)?;
-    let mut crate_bytes: Option<Vec<u8>> = None;
-
-    let pkg = match maybe_pkg {
-        cargo::sources::source::MaybePackage::Ready(p) => p,
-        cargo::sources::source::MaybePackage::Download {
-            url,
-            descriptor,
-            authorization,
-        } => {
-            config.shell().status("Downloading", &descriptor)?;
-
-            let client = reqwest::blocking::Client::new();
-            let mut request = client.get(&url);
-            if let Some(auth) = authorization {
-                request = request.header("Authorization", auth);
-            }
-
-            let response = request
-                .send()
-                .with_context(|| format!("failed to download from {}", url))?;
-
-            if !response.status().is_success() {
-                anyhow::bail!("failed to download: HTTP {}", response.status());
-            }
-
-            let body = response.bytes()?.to_vec();
-            crate_bytes = Some(body.clone());
-
-            source.finish_download(pkg_id, body)?
-        }
-    };
-
-    let filename = format!(
-        "{}-{}.crate",
-        pkg.package_id().name(),
-        pkg.package_id().version()
+[dependencies]
+{}
+"#,
+        dep_spec
     );
-    let dst = canonical_local_dst.join(&filename);
 
-    if let Some(bytes) = crate_bytes {
-        std::fs::create_dir_all(&canonical_local_dst)?;
-        std::fs::write(&dst, bytes)?;
-    } else {
-        // Fallback to cached copy
-        let cache = get_cache_path(registry_id, config);
-        let src = cache.join(&filename);
-        if src.exists() {
-            std::fs::copy(&src, &dst)?;
-        } else {
-            anyhow::bail!(
-                "crate `{}` version `{}` missing from cache and not downloaded",
-                pkg.package_id().name(),
-                pkg.package_id().version()
-            );
-        }
-    }
+    fs::write(&manifest_path, manifest_content)?;
 
-    let index_path = get_index_path(pkg_id.name().as_str(), &canonical_local_dst);
+    // Create a minimal src/lib.rs so Cargo doesn't complain
+    let src_dir = temp_dir.path().join("src");
+    fs::create_dir(&src_dir)?;
+    fs::write(src_dir.join("lib.rs"), "")?;
 
-    let mut checksums = BTreeMap::new();
-    if let Some(cksum) = checksum {
-        checksums.insert(pkg_id, Some(cksum.to_string()));
-    }
-    let registry_package = registry_pkg_from_summary(&summary, &checksums, pkg_id);
-    let line = serde_json::to_string(&registry_package)?;
+    let original_dir = env::current_dir()?;
+    env::set_current_dir(temp_dir.path())?;
 
-    update_index_entry(&index_path, &line, &pkg_id.version().to_string(), true)?;
+    let ws = Workspace::new(&manifest_path, config)?;
+    let _result = cargo::ops::resolve_ws(&ws, false)?;
 
-    Ok(registry_package.deps)
+    env::set_current_dir(&original_dir)?;
+
+    let lockfile_path = temp_dir.path().join("Cargo.lock");
+
+    sync_lockfile(&lockfile_path, local_dst, registry_id, false, true, config)?;
+
+    Ok(())
 }
 
 fn sync_lockfile(
@@ -703,65 +536,6 @@ fn build_ar_from_files(
         })?;
     }
     Ok(())
-}
-
-fn registry_pkg_from_summary(
-    summary: &cargo::core::Summary,
-    checksums: &BTreeMap<PackageId, Option<String>>,
-    pkg_id: PackageId,
-) -> RegistryPackage {
-    let mut deps = summary
-        .dependencies()
-        .iter()
-        .map(|dep| {
-            let (name, package) = match &dep.explicit_name_in_toml() {
-                Some(explicit) => (explicit.to_string(), Some(dep.package_name().to_string())),
-                None => (dep.package_name().to_string(), None),
-            };
-
-            RegistryDependency {
-                name,
-                req: dep.version_req().to_string(),
-                features: dep.features().iter().map(|s| s.to_string()).collect(),
-                optional: dep.is_optional(),
-                default_features: dep.uses_default_features(),
-                target: dep.platform().map(|platform| match *platform {
-                    Platform::Name(ref s) => s.to_string(),
-                    Platform::Cfg(ref s) => format!("cfg({})", s),
-                }),
-                kind: match dep.kind() {
-                    DepKind::Normal => None,
-                    DepKind::Development => Some("dev".to_string()),
-                    DepKind::Build => Some("build".to_string()),
-                },
-                package,
-            }
-        })
-        .collect::<Vec<_>>();
-    deps.sort();
-
-    let features = summary
-        .features()
-        .iter()
-        .map(|(k, v)| {
-            let mut v = v.iter().map(|fv| fv.to_string()).collect::<Vec<_>>();
-            v.sort();
-            (k.to_string(), v)
-        })
-        .collect();
-
-    RegistryPackage {
-        name: pkg_id.name().to_string(),
-        vers: pkg_id.version().to_string(),
-        deps,
-        features,
-        cksum: checksums
-            .get(&pkg_id)
-            .cloned()
-            .unwrap_or_default()
-            .unwrap_or_default(),
-        yanked: Some(false),
-    }
 }
 
 fn registry_pkg(pkg: &Package, resolve: &Resolve) -> RegistryPackage {

@@ -682,7 +682,6 @@ fn add_command_latest() {
     run(cmd()
         .arg("add")
         .arg("serde")
-        .arg("--no-deps")
         .arg(&registry));
 
     // Verify crate file exists
@@ -700,6 +699,22 @@ fn add_command_latest() {
         crate_files.len(),
         1,
         "Expected exactly one serde crate file"
+    );
+
+    // Verify dependencies are also added
+    let all_crates: Vec<_> = registry
+        .read_dir()
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| {
+            e.file_name()
+                .to_str()
+                .is_some_and(|name| name.ends_with(".crate"))
+        })
+        .collect();
+    assert!(
+        all_crates.len() > 1,
+        "Expected serde and its dependencies"
     );
 
     // Verify index entry exists
@@ -731,7 +746,6 @@ fn add_command_specific_version() {
         .arg("libc")
         .arg("--version")
         .arg("0.2.100")
-        .arg("--no-deps")
         .arg(&registry));
 
     // Verify correct version was added
@@ -748,6 +762,42 @@ fn add_command_specific_version() {
 }
 
 #[test]
+fn add_command_version_requirement() {
+    let _l = lock();
+    let td = TempDir::new().unwrap();
+    let registry = td.path().join("registry");
+
+    // Add using a caret version requirement
+    run(cmd()
+        .arg("add")
+        .arg("sct")
+        .arg("--version")
+        .arg("^0.7")
+        .arg(&registry));
+
+    // Verify a version matching ^0.7 was added (should be 0.7.x)
+    let crate_files: Vec<_> = registry
+        .read_dir()
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter_map(|e| e.file_name().into_string().ok())
+        .filter(|name| name.starts_with("sct-0.7.") && name.ends_with(".crate"))
+        .collect();
+
+    assert!(!crate_files.is_empty(), "Expected sct-0.7.x crate file");
+    assert!(registry.join("index/3/s/sct").is_file());
+
+    let mut contents = String::new();
+    File::open(registry.join("index/3/s/sct"))
+        .unwrap()
+        .read_to_string(&mut contents)
+        .unwrap();
+
+    // Verify version is 0.7.x
+    assert!(contents.contains("\"vers\":\"0.7."));
+}
+
+#[test]
 fn add_command_multiple_crates() {
     let _l = lock();
     let td = TempDir::new().unwrap();
@@ -757,14 +807,12 @@ fn add_command_multiple_crates() {
     run(cmd()
         .arg("add")
         .arg("anyhow")
-        .arg("--no-deps")
         .arg(&registry));
     run(cmd()
         .arg("add")
         .arg("serde")
-        .arg("--no-deps")
         .arg(&registry));
-    run(cmd().arg("add").arg("libc").arg("--no-deps").arg(&registry));
+    run(cmd().arg("add").arg("libc").arg(&registry));
 
     // Verify all crates exist
     let files: Vec<_> = registry
@@ -796,7 +844,6 @@ fn add_command_multiple_versions_same_crate() {
         .arg("libc")
         .arg("--version")
         .arg("0.2.100")
-        .arg("--no-deps")
         .arg(&registry));
 
     // Add a different version of the same crate
@@ -805,7 +852,6 @@ fn add_command_multiple_versions_same_crate() {
         .arg("libc")
         .arg("--version")
         .arg("0.2.101")
-        .arg("--no-deps")
         .arg(&registry));
 
     // Both versions should exist (not replaced)
@@ -837,7 +883,6 @@ fn add_command_yanked_version() {
         .arg("rustc-serialize")
         .arg("--version")
         .arg("0.3.24")
-        .arg("--no-deps")
         .arg(&registry));
 
     // Should still be able to add it when explicitly requested
@@ -864,7 +909,6 @@ fn add_command_latest_skips_yanked() {
     run(cmd()
         .arg("add")
         .arg("serde")
-        .arg("--no-deps")
         .arg(&registry));
 
     // Read the version that was added
@@ -914,43 +958,11 @@ fn add_command_with_deps() {
                 .is_some_and(|name| name.starts_with("log-") && name.ends_with(".crate"))
         })
         .collect();
-    assert_eq!(log_crates.len(), 1, "Expected exactly one log crate file");
-    assert!(registry.join("index/lo/g/log").is_file());
-}
+    assert!(log_crates.len() >= 1, "Expected at least one log crate file");
 
-#[test]
-fn add_command_no_deps() {
-    let _l = lock();
-    let td = TempDir::new().unwrap();
-    let registry = td.path().join("registry");
-
-    // Add a crate with known dependencies, but with --no-deps.
-    // `tiny_http@0.11.0` depends on `ascii` and `log`.
-    run(cmd()
-        .arg("add")
-        .arg("tiny_http")
-        .arg("--version")
-        .arg("0.11.0")
-        .arg("--no-deps")
-        .arg(&registry));
-
-    // Verify that tiny_http is present.
-    assert!(registry.join("tiny_http-0.11.0.crate").is_file());
-    assert!(registry.join("index/ti/ny/tiny_http").is_file());
-
-    // Verify that dependencies are NOT present.
-    let log_crates: Vec<_> = registry
-        .read_dir()
-        .unwrap()
-        .filter_map(|e| e.ok())
-        .filter(|e| {
-            e.file_name()
-                .to_str()
-                .is_some_and(|name| name.starts_with("log-") && name.ends_with(".crate"))
-        })
-        .collect();
-    assert_eq!(log_crates.len(), 0, "Expected no log crate files");
-    assert!(!registry.join("index/lo/g/log").exists());
+    // Check if log index exists (3-letter crates go in 3/x/xxx/)
+    let log_index = registry.join("index/3/l/log");
+    assert!(log_index.is_file(), "Expected log index at {:?}", log_index);
 }
 
 fn run(cmd: &mut Command) -> String {
