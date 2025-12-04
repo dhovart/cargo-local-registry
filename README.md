@@ -1,12 +1,6 @@
 # `cargo local-registry`
 
-[![Build Status](https://travis-ci.org/alexcrichton/cargo-local-registry.svg?branch=master)](https://travis-ci.org/alexcrichton/cargo-local-registry)
-[![Build status](https://ci.appveyor.com/api/projects/status/x867la68pp0s94an/branch/master?svg=true)](https://ci.appveyor.com/project/alexcrichton/cargo-local-registry/branch/master)
-
-This is a Cargo subcommand to ease maintenance of local registries. Support for
-a local registry is being added in
-[rust-lang/cargo#2361](https://github.com/rust-lang/cargo/pull/2361) and will be
-able to redirect all Cargo downloads/requests to a registry stored locally.
+This is a Cargo subcommand to ease maintenance of local registries.
 
 This support is often useful for "offline builds" by preparing the list of all
 Rust dependencies ahead of time and shipping them to a build machine in a
@@ -28,7 +22,7 @@ Note that you'll need the build tools listed below for this to succeed. If you'd
 prefer to download precompiled binaries assembled on the CI for this repository,
 you may also use the [GitHub releases][releases]
 
-[releases]: https://github.com/alexcrichton/cargo-local-registry/releases
+[releases]: https://github.com/dhovart/cargo-local-registry/releases
 
 ## Building
 
@@ -53,7 +47,7 @@ One of the primary operations will be to create a local registry from a lock
 file itself. This can be done via
 
 ```
-cargo local-registry --sync path/to/Cargo.lock path/to/registry
+cargo local-registry sync path/to/Cargo.lock path/to/registry
 ```
 
 This command will:
@@ -62,6 +56,34 @@ This command will:
 * Verify all checksums of what's downloaded
 * Place all downloads in `path/to/registry`
 * Prepare the index of `path/to/registry` to reflect all this information
+
+
+Full usage informaton: 
+
+```
+cargo-local-registry [OPTIONS] [PATH] [COMMAND]
+
+Commands:
+  sync  Sync the registry with a Cargo.lock file
+  add   Add a crate to the registry
+  help  Print this message or the help of the given subcommand(s)
+
+Arguments:
+  [PATH]  Path to the local registry
+
+Options:
+  -s, --sync <SYNC>    Sync the registry with lockfile (backwards compatibility)
+      --host <HOST>    Registry index to sync with
+      --git            Vendor git dependencies as well
+      --no-delete      Don't delete older crates in the local registry directory
+  -v, --verbose...     Use verbose output
+  -q, --quiet          No output printed to stdout
+  -c, --color <COLOR>  Coloring: auto, always, never
+  -h, --help           Print help
+  -V, --version        Print version
+```
+
+
 
 # License
 
