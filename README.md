@@ -1,3 +1,5 @@
+[![CI Tests](https://github.com/dhovart/cargo-local-registry/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/dhovart/cargo-local-registry/actions/workflows/ci.yml)
+
 # `cargo local-registry`
 
 This is a Cargo subcommand to ease maintenance of local registries.
