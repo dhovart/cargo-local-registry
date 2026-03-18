@@ -374,7 +374,7 @@ dependencies = [
 
 [[package]]
 name = "cargo-local-registry"
-version = "0.2.10"
+version = "0.2.11"
 dependencies = [
  "anyhow",
  "cargo",
