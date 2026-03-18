@@ -965,6 +965,112 @@ fn add_command_with_deps() {
     assert!(log_index.is_file(), "Expected log index at {:?}", log_index);
 }
 
+#[test]
+fn no_targets_manifest() {
+    let _l = lock();
+    let td = TempDir::new().unwrap();
+    let lock = td.path().join("Cargo.lock");
+    let registry = td.path().join("registry");
+
+    File::create(td.path().join("Cargo.toml"))
+        .unwrap()
+        .write_all(
+            br#"
+        [package]
+        name = "foo"
+        version = "0.1.0"
+        authors = []
+
+        [dependencies]
+        lazy_static = "0.2.11"
+    "#,
+        )
+        .unwrap();
+    File::create(&lock)
+        .unwrap()
+        .write_all(
+            br#"
+[[package]]
+name = "foo"
+version = "0.1.0"
+dependencies = [
+ "lazy_static 0.2.11 (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
+name = "lazy_static"
+version = "0.2.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+"#,
+        )
+        .unwrap();
+
+    run(cmd().arg(&registry).arg("--sync").arg(&lock));
+
+    assert!(registry.join("lazy_static-0.2.11.crate").is_file());
+    assert!(registry.join("index/la/zy/lazy_static").is_file());
+
+    // The temporary src/ created by the workaround must have been cleaned up.
+    assert!(
+        !td.path().join("src").exists(),
+        "temporary src/ directory was not removed after sync"
+    );
+}
+
+#[test]
+fn valid_manifest_with_src() {
+    let _l = lock();
+    let td = TempDir::new().unwrap();
+    let lock = td.path().join("Cargo.lock");
+    let registry = td.path().join("registry");
+
+    fs::create_dir(td.path().join("src")).unwrap();
+    File::create(td.path().join("src/lib.rs"))
+        .unwrap()
+        .write_all(b"")
+        .unwrap();
+    File::create(td.path().join("Cargo.toml"))
+        .unwrap()
+        .write_all(
+            br#"
+        [package]
+        name = "foo"
+        version = "0.1.0"
+        authors = []
+
+        [dependencies]
+        lazy_static = "0.2.11"
+    "#,
+        )
+        .unwrap();
+    File::create(&lock)
+        .unwrap()
+        .write_all(
+            br#"
+[[package]]
+name = "foo"
+version = "0.1.0"
+dependencies = [
+ "lazy_static 0.2.11 (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
+name = "lazy_static"
+version = "0.2.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+"#,
+        )
+        .unwrap();
+
+    run(cmd().arg(&registry).arg("--sync").arg(&lock));
+
+    assert!(registry.join("lazy_static-0.2.11.crate").is_file());
+    assert!(registry.join("index/la/zy/lazy_static").is_file());
+
+    // src/ must be untouched – the workaround must not interfere.
+    assert!(td.path().join("src/lib.rs").exists());
+}
+
 fn run(cmd: &mut Command) -> String {
     let output = cmd.env("RUST_BACKTRACE", "1").output().unwrap();
     if !output.status.success() {
