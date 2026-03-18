@@ -332,6 +332,20 @@ edition = "2021"
     Ok(())
 }
 
+struct TempTargetGuard {
+    lib_rs: PathBuf,
+    src_dir: Option<PathBuf>,
+}
+
+impl Drop for TempTargetGuard {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.lib_rs);
+        if let Some(dir) = &self.src_dir {
+            let _ = fs::remove_dir(dir);
+        }
+    }
+}
+
 fn sync_lockfile(
     lockfile: &Path,
     local_dst: &Path,
@@ -343,7 +357,37 @@ fn sync_lockfile(
     let canonical_local_dst = local_dst.canonicalize().unwrap_or(local_dst.to_path_buf());
     let manifest = lockfile.parent().unwrap().join("Cargo.toml");
     let manifest = env::current_dir().unwrap().join(&manifest);
-    let ws = Workspace::new(&manifest, config)?;
+
+    let _temp_target: Option<TempTargetGuard>;
+    let ws = match Workspace::new(&manifest, config) {
+        Ok(ws) => {
+            _temp_target = None;
+            ws
+        }
+        Err(original_err) => {
+            if !manifest.exists() {
+                return Err(original_err);
+            }
+            let src_dir = manifest.parent().unwrap().join("src");
+            let src_lib_rs = src_dir.join("lib.rs");
+            if src_lib_rs.exists() || src_dir.join("main.rs").exists() {
+                return Err(original_err);
+            }
+            let created_src_dir = !src_dir.exists();
+            if created_src_dir {
+                fs::create_dir_all(&src_dir)?;
+            }
+            fs::write(&src_lib_rs, "")?;
+            let guard = TempTargetGuard {
+                lib_rs: src_lib_rs,
+                src_dir: if created_src_dir { Some(src_dir) } else { None },
+            };
+            let ws = Workspace::new(&manifest, config)?;
+            _temp_target = Some(guard);
+            ws
+        }
+    };
+
     let (packages, resolve) = cargo::ops::resolve_ws(&ws, /* dry_run */ false)
         .with_context(|| "failed to load pkg lockfile")?;
     packages.get_many(resolve.iter())?;
