@@ -20,7 +20,7 @@ all = "deny"
 
 [dependencies]
 anyhow = "1.0.102"
-cargo = "0.95.0"
+cargo = "0.96.0"
 cargo-platform = "0.3.2"
 clap = { version = "4.6.1", features = ["derive"] }
 env_logger = "0.11.9"
