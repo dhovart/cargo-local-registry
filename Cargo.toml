@@ -22,6 +22,7 @@ all = "deny"
 anyhow = "1.0.102"
 cargo = "0.96.0"
 cargo-platform = "0.3.2"
+cargo-util = "0.2.28"
 clap = { version = "4.6.1", features = ["derive"] }
 env_logger = "0.11.9"
 flate2 = "1.1.9"
