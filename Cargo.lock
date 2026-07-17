@@ -380,6 +380,7 @@ dependencies = [
  "anyhow",
  "cargo",
  "cargo-platform",
+ "cargo-util",
  "clap",
  "env_logger",
  "flate2",

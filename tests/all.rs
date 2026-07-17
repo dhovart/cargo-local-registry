@@ -1,5 +1,6 @@
 extern crate tempfile;
 
+use cargo_util::Sha256;
 use std::env;
 use std::fs::{self, File};
 use std::io::prelude::*;
@@ -228,8 +229,16 @@ source = "git+https://github.com/rust-lang/libc#36bec35aeb600bb1b8b47f4985a84a8d
     run(cmd().arg(&registry).arg("--sync").arg(&lock).arg("--git"));
 
     assert!(registry.join("index").is_dir());
-    assert!(registry.join("index/li/bc/libc").is_file());
-    assert!(registry.join("libc-0.2.16.crate").is_file());
+    let index_path = registry.join("index/li/bc/libc");
+    let archive_path = registry.join("libc-0.2.16.crate");
+    assert!(index_path.is_file());
+    assert!(archive_path.is_file());
+
+    let entry: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(index_path).unwrap()).unwrap();
+    let mut hasher = Sha256::new();
+    hasher.update_path(archive_path).unwrap();
+    assert_eq!(entry["cksum"], hasher.finish_hex());
 }
 
 #[test]

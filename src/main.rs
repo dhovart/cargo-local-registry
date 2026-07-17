@@ -6,6 +6,7 @@ use cargo::sources::PathSource;
 use cargo::util::GlobalContext;
 use cargo::util::errors::*;
 use cargo_platform::Platform;
+use cargo_util::Sha256;
 use clap::Parser as _;
 use flate2::write::GzEncoder;
 use rayon::prelude::*;
@@ -106,6 +107,14 @@ struct RegistryPackage {
     cksum: String,
     features: BTreeMap<String, Vec<String>>,
     yanked: Option<bool>,
+}
+
+struct PackageMetadata {
+    archive_path: PathBuf,
+    index_path: PathBuf,
+    registry_package: RegistryPackage,
+    version: String,
+    generated_archive: bool,
 }
 
 #[derive(Eq, Ord, PartialEq, PartialOrd, Deserialize, Serialize)]
@@ -439,12 +448,13 @@ fn sync_lockfile(
         // Store metadata for index creation
         let index_dst = get_index_path(id.name().as_str(), &canonical_local_dst);
 
-        package_metadata.push((
-            dst,
-            index_dst,
-            serde_json::to_string(&registry_pkg(pkg, &resolve)).unwrap(),
-            id.version().to_string(),
-        ));
+        package_metadata.push(PackageMetadata {
+            archive_path: dst,
+            index_path: index_dst,
+            registry_package: registry_pkg(pkg, &resolve),
+            version: id.version().to_string(),
+            generated_archive: id.source_id().is_git(),
+        });
     }
 
     // Phase 2: Execute file tasks in parallel
@@ -478,14 +488,21 @@ fn sync_lockfile(
     let mut added_crates = HashSet::new();
     let mut added_index = HashSet::new();
 
-    for (crate_dst, index_dst, line, version) in package_metadata {
-        added_crates.insert(crate_dst);
+    for mut metadata in package_metadata {
+        if metadata.generated_archive {
+            let mut hasher = Sha256::new();
+            hasher.update_path(&metadata.archive_path)?;
+            metadata.registry_package.cksum = hasher.finish_hex();
+        }
+        let line = serde_json::to_string(&metadata.registry_package).unwrap();
+
+        added_crates.insert(metadata.archive_path);
 
         // Keep old versions if no_delete is set OR if we already updated this index file in this run
-        let keep_old = no_delete || added_index.contains(&index_dst);
-        update_index_entry(&index_dst, &line, &version, keep_old)?;
+        let keep_old = no_delete || added_index.contains(&metadata.index_path);
+        update_index_entry(&metadata.index_path, &line, &metadata.version, keep_old)?;
 
-        added_index.insert(index_dst);
+        added_index.insert(metadata.index_path);
     }
 
     if !no_delete {
